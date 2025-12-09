@@ -7,27 +7,42 @@ from openai import OpenAI
 # [설정] 페이지 기본 세팅
 st.set_page_config(page_title="Deep Agora: 숙의의 정원", layout="wide", page_icon="🌷")
 
-# --- [스타일] CSS 커스텀 (정원 분위기 연출) ---
+# --- [스타일] CSS 커스텀 (다크모드 호환성 해결) ---
 st.markdown("""
 <style>
-    /* 배경색을 은은한 미색으로 변경 */
+    /* 1. 전체 배경색: 은은한 미색 */
     .stApp {
         background-color: #FDFCF8;
     }
-    /* 카드 디자인: 그림자 효과와 둥근 모서리 */
+    
+    /* 2. 메인 텍스트 강제 검정색 (다크모드일 때 흰 글씨 되는 것 방지) */
+    .stMarkdown, .stText, p, div {
+        color: #333333 !important;
+    }
+
+    /* 3. 카드 디자인 */
     div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
         background-color: white;
         padding: 15px;
         border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         border: 1px solid #E0E0E0;
+        /* 카드 내부 글자색도 확실하게 검정으로 고정 */
+        color: #333333 !important;
     }
-    /* 헤더 폰트 스타일 */
+
+    /* 4. 헤더 폰트 스타일 */
     h1, h2, h3 {
         font-family: 'Helvetica Neue', sans-serif;
-        color: #2E7D32;
+        color: #2E7D32 !important; /* 진한 초록색 */
     }
-    /* 프로그레스 바 색상 (초록색) */
+    
+    /* 5. 입력창, 버튼 등 컴포넌트 텍스트 색상 보정 */
+    .stTextInput > label, .stButton > button {
+        color: #333333 !important;
+    }
+    
+    /* 6. 프로그레스 바 색상 (초록색) */
     .stProgress > div > div > div > div {
         background-color: #66BB6A;
     }
