@@ -86,38 +86,47 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [최종 수정] GPT 프롬프트 (추상적/원론적 주장 수용) ---
+# --- [핵심 수정] GPT 프롬프트: 동적 병합 (Organic Clustering) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
-    existing_keywords = ", ".join(st.session_state.forest_df['keyword'].unique())
     
-    if purity_level >= 80:
-        tone_instruction = "Extremely formal, diplomatic, and soft tone."
-    elif purity_level >= 40:
-        tone_instruction = "Polite, objective, and declarative tone."
+    # 1. 현재 숲에 자라고 있는 나무 이름들(키워드)을 가져옴
+    if not st.session_state.forest_df.empty:
+        existing_keywords = list(st.session_state.forest_df['keyword'].unique())
+        existing_list_str = ", ".join(f"'{k}'" for k in existing_keywords)
     else:
-        tone_instruction = "Direct and assertive tone. Remove only curse words."
+        existing_list_str = "None"
+
+    # 순도(Mildness) 설정
+    if purity_level >= 80:
+        tone = "Extremely formal, diplomatic"
+    elif purity_level >= 40:
+        tone = "Polite, objective"
+    else:
+        tone = "Direct, assertive"
 
     system_prompt = f"""
-    You are a 'Civic Editor' acting as a Contextual Interpreter.
+    You are a 'Civic Editor' managing an Opinion Forest.
     
-    [Context]: The current debate is about "Australia's ban on SNS for under-16s".
-    
-    [Step 1: Relevance & Context Check]
-    The user might argue based on abstract principles (e.g., "Market Logic", "State Interference", "Freedom") without explicitly mentioning "SNS" or "Australia".
-    * RULE: If the input discusses 'State vs Market', 'Regulation', 'Freedom', or 'Protection', ASSUME it applies to this SNS ban topic.
-    * RULE: Even if it sounds like a general political complaint (e.g., "Why does the state always interfere?"), ACCEPT it as an argument against the ban.
-    * REJECT ONLY IF: It is PURELY about unrelated South Korean domestic scandals (e.g., "Investigate the First Lady", "Impeach the President") with NO logical link to policy/regulation.
+    [Step 1: Context Check]
+    Current Topic: "Australia's SNS ban for under-16s".
+    Existing Trees (Keywords) in Forest: [{existing_list_str}]
 
-    [Step 2: Logic Distillation]
-    1. Remove specific politician names (e.g., Lee Jae-myung, Yoon Suk-yeol) but KEEP the policy argument behind it.
-    2. Remove cynicism (e.g., "Govt is useless anyway") and keep the core stance.
-    
-    [Step 3: Output Generation]
-    * Keyword: Extract the core value (e.g., 'Market Freedom', 'State Responsibility').
-    * Short Label: Max 20 chars.
-    * Full Text: Rewrite in Korean ({tone_instruction}).
+    [Step 2: Semantic Clustering] (CRITICAL)
+    Analyze the user's input. Does it conceptually belong to one of the 'Existing Trees'?
+    * YES -> Reuse the EXACT same keyword from the list.
+    * NO -> Create a NEW Korean keyword (Noun, max 10 chars) that best represents the core value (e.g., '과도한 규제', '국가의 의무').
+    * NOTE: Group similar concepts even if phrased differently (e.g., "State shouldn't interfere" & "Market freedom" -> "과도한 규제" or "자율성 침해").
 
+    [Step 3: Logic Distillation]
+    * Remove specific politician names (e.g., Yoon, Lee) and cynicism.
+    * Extract the core policy argument.
+    
+    [Step 4: Output Generation]
+    * Keyword: The selected existing keyword OR the new one (Must be KOREAN).
+    * Short Label: A summary of the sentence (max 20 chars, Korean).
+    * Full Text: Refined sentence ({tone}, Korean).
+    
     Format: Keyword|Short Label|Full Refined Text
     """
     
@@ -125,13 +134,14 @@ def process_opinion_with_gpt(user_text, purity_level):
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
-            temperature=0.3
+            temperature=0.3 # 일관성을 위해 낮춤
         )
         result = response.choices[0].message.content
         
+        # 주제 이탈 방어 로직 (간소화)
         if "REJECT" in result:
             return "REJECT"
-            
+
         keyword, short_label, full_text = result.split("|", 2)
         return {
             "keyword": keyword.strip(),
@@ -140,16 +150,16 @@ def process_opinion_with_gpt(user_text, purity_level):
         }
     except:
         return None
-        
-# --- [로직] 유사도 병합 ---
+
+# --- [로직] 단순화된 병합 (이제 AI가 키워드를 맞춰주므로 로직은 간단해짐) ---
 def merge_opinion(new_full_text, keyword, df):
+    # AI가 이미 같은 키워드를 줬다면, 그 안에서 문장 유사도만 체크
     subset = df[df['keyword'] == keyword]
     for idx, row in subset.iterrows():
         similarity = difflib.SequenceMatcher(None, new_full_text, row['full_text']).ratio()
         if similarity >= 0.7: 
             return idx, True 
     return None, False
-
 # ================= UI 시작 =================
 
 st.title("🌲 Deep Agora: 가치의 숲")
