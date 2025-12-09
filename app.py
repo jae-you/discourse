@@ -210,8 +210,8 @@ if not st.session_state.opinions_df.empty:
         </div>
         """, unsafe_allow_html=True)
 
-# 4. 정제된 의견 기록 (카드 디자인 개선)
-with st.expander("📜 AI가 정제한 시민 의견 기록 (Live Log)", expanded=True):
+    # 4. 정제된 의견 기록 (카드 디자인 개선)
+    with st.expander("📜 AI가 정제한 시민 의견 기록 (Live Log)", expanded=True):
         for idx, row in st.session_state.opinions_df.iloc[::-1].iterrows():
             # 스탠스에 따른 뱃지 색상 결정
             badge_color = "#374151" # 기본 회색
