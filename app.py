@@ -86,11 +86,12 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [수정된 핵심 로직] GPT 프롬프트 (Topic Guard 개선) ---
+# --- [핵심 로직] GPT 프롬프트 (정치적 비유 제거 강화) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     existing_keywords = ", ".join(st.session_state.forest_df['keyword'].unique())
     
+    # 순도 레벨에 따른 톤 설정
     if purity_level >= 80:
         tone_instruction = "Extremely formal, diplomatic, and soft tone."
     elif purity_level >= 40:
@@ -98,28 +99,27 @@ def process_opinion_with_gpt(user_text, purity_level):
     else:
         tone_instruction = "Direct and assertive tone. Remove only curse words."
 
-    # [프롬프트 수정 포인트]
-    # 1. Relevance Check에 'VPN', 'Bypass', 'Education' 등 구체적 키워드 명시
-    # 2. "Casual tone is OK"라고 명시하여 말투 때문에 거절하지 않도록 함
     system_prompt = f"""
-    You are a 'Civic Editor' acting as a Gatekeeper.
+    You are a 'Civic Editor' acting as a Gatekeeper and Refiner.
     
     [Step 1: Relevance Check]
-    Check if the user input is logically related to: 
-    - "Australia's SNS ban for under-16s"
-    - "Social Media Regulation / Teenager Protection"
-    - "Technical Feasibility (e.g., VPN, Bypass, Verification errors)"
-    - "Digital Rights / Privacy"
+    Check if the input is logically related to: "Australia's SNS ban" or "Social Media Regulation".
+    * ALLOW: Slang, typos, short sentences, and specific political metaphors IF they contain a relevant policy argument.
+    * REJECT ONLY IF: Pure domestic politics (e.g. just shouting "Impeach Yoon"), Sports, Food, or gibberish with NO link to the topic.
+      -> Output: "REJECT"
+
+    [Step 2: Sanitization & Rewriting] (CRITICAL)
+    The user might use Korean domestic politics (e.g., presidents like 'Lee Myung-bak', 'Yoon', 'Moon') as a metaphor to criticize the situation.
+    * RULE: COMPLETELY REMOVE references to specific Korean politicians, parties, or past eras.
+    * RULE: Extract ONLY the core policy argument (e.g., "State responsibility", "Freedom of speech").
     
-    * CRITICAL: Even if the user uses slang, informal language, or short sentences (e.g., "VPN 쓰면 됨", "이게 말이 되냐"), IF the meaning is relevant, proceed to Step 2.
-    * REJECT ONLY IF: The input is about South Korean domestic politics (President Yoon, impeachment), Sports, Food, or meaningless gibberish.
-      -> In that case, OUTPUT ONLY: "REJECT"
-    
-    [Step 2: Processing]
-    1. REWRITE input into Korean ({tone_instruction}).
-    2. EXTRACT 'Value Keyword' (Noun, max 3 words).
-    3. Create 'Short Label' (max 20 chars).
-    
+    Example:
+    - Input: "이명박 시대도 아니고 국가가 애들 안 지키고 뭐하냐" 
+    - (Analysis): "Lee Myung-bak era" is a metaphor for 'backwardness'. "Protect kids" is the argument.
+    - Output: 청소년 보호 | 국가의 책임 | 청소년 보호를 위한 국가의 적극적인 개입과 책임 이행이 필요합니다.
+
+    [Step 3: Final Output]
+    Tone: {tone_instruction}
     Format: Keyword|Short Label|Full Refined Text
     """
     
