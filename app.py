@@ -86,11 +86,11 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [최종 수정] GPT 프롬프트 (정치적 구호 차단 & 찬반 로직 강화) ---
+# --- [최종 수정] GPT 프롬프트 (추상적 논거 허용 & 한국어 강제) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     
-    # 숲에 있는 기존 키워드 리스트
+    # 숲에 있는 기존 키워드 리스트 (한국어)
     if not st.session_state.forest_df.empty:
         existing_keywords = list(st.session_state.forest_df['keyword'].unique())
         existing_list_str = ", ".join(f"'{k}'" for k in existing_keywords)
@@ -106,39 +106,45 @@ def process_opinion_with_gpt(user_text, purity_level):
         tone = "Direct, assertive"
 
     system_prompt = f"""
-    You are a 'Civic Editor' capable of distinguishing between 'Political Noise' and 'Policy Arguments'.
+    You are a 'Civic Editor' capable of understanding implicit context.
     
-    [Context]: The topic is "Australia's SNS ban for under-16s" (State Regulation vs Individual Freedom).
+    [Context]: The debate is "Australia's SNS ban for under-16s".
+    However, users will discuss broad principles: "State vs Market", "Tech Feasibility (VPN)", "Education", "Privacy".
 
-    [Step 1: Strict Rejection Filter]
-    Analyze the user input.
-    * IF the input is a PURE political slogan (e.g., "Yoon Suk-yeol Out", "Impeach President", "Tear down the party") with NO mention of policy, social issues, or regulation -> OUTPUT: "REJECT"
-    * IF the input is random noise (Sports, Food, Weather) -> OUTPUT: "REJECT"
-    
-    [Step 2: Polarity & Logic Distillation] (CRITICAL)
-    Users often use "Cynical Support" (Hating the person, but supporting the policy).
-    * CASE A: "I hate [Politician], but we need this ban." 
-      -> INTENT: PRO-REGULATION. Keyword: 'Youth Protection' or 'State Duty'.
-    * CASE B: "What is the state doing? It's not [Old Era]."
-      -> INTENT: PRO-REGULATION (Demanding stronger action). Keyword: 'State Responsibility'.
-    * CASE C: "Govt is interfering with the market."
-      -> INTENT: ANTI-REGULATION. Keyword: 'Market Freedom' or 'Excessive Regulation'.
+    [Step 1: Broad Relevance Check] (CRITICAL)
+    * DO NOT look for exact words like "Australia" or "SNS".
+    * ACCEPT if the input discusses:
+      - Market logic vs State interference (e.g., "Why does the state intervene?", "Leave it to the market")
+      - Technical limitations (e.g., "VPN works anyway", "Bypass is easy")
+      - Education vs Regulation (e.g., "Parents should do it", "Teach them instead")
+      - Privacy/Freedom (e.g., "My right to access", "Surveillance")
+    * REJECT ONLY IF:
+      - Pure domestic political slogan WITHOUT policy context (e.g. ONLY "Yoon Out", "Jail Lee").
+      - Completely unrelated (Food, Sports, Weather).
+      -> Output: "REJECT"
 
-    * ACTION: Remove ALL politician names (Yoon, Lee, Moon, etc.) and party names. Keep only the policy argument.
+    [Step 2: Logic Distillation]
+    * Political filter: Remove politician names (Yoon, Lee, etc.) but KEEP the argument (e.g., "State shouldn't control markets").
+    * Tone filter: Ignore sarcasm (e.g., "Govt is stupid") and extract the core point.
 
-    [Step 3: Semantic Clustering]
-    * Match with Existing Trees: [{existing_list_str}] if appropriate.
-    * Or create a NEW Korean Keyword (Noun, max 10 chars).
+    [Step 3: Keyword Assignment]
+    * Reuse existing keywords if possible: [{existing_list_str}]
+    * If new, create a KOREAN Noun (max 10 chars).
+    * RULE: NEVER use English for the Keyword. (e.g., 'Market Freedom' -> '시장 자율성', 'State Responsibility' -> '국가의 책임')
 
-    [Output Format]
-    Keyword|Short Label|Full Refined Text
+    [Step 4: Output Generation]
+    * Keyword: KOREAN ONLY.
+    * Short Label: KOREAN summary (max 20 chars).
+    * Full Text: Refined Korean sentence ({tone}).
+
+    Format: Keyword|Short Label|Full Refined Text
     """
     
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
-            temperature=0.1 # 실수를 줄이기 위해 창의성을 확 낮춤 (0.1)
+            temperature=0.1 # 일관성을 위해 낮춤
         )
         result = response.choices[0].message.content
         
