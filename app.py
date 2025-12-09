@@ -86,11 +86,11 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [최종 수정] GPT 프롬프트 (추상적 논거 허용 & 한국어 강제) ---
+# --- [최종 진화] GPT 프롬프트 (대안 우선 법칙 적용) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     
-    # 숲에 있는 기존 키워드 리스트 (한국어)
+    # 기존 숲 키워드
     if not st.session_state.forest_df.empty:
         existing_keywords = list(st.session_state.forest_df['keyword'].unique())
         existing_list_str = ", ".join(f"'{k}'" for k in existing_keywords)
@@ -106,35 +106,31 @@ def process_opinion_with_gpt(user_text, purity_level):
         tone = "Direct, assertive"
 
     system_prompt = f"""
-    You are a 'Civic Editor' capable of understanding implicit context.
+    You are a 'Civic Editor' capable of identifying the ULTIMATE INTENT of a complex argument.
     
-    [Context]: The debate is "Australia's SNS ban for under-16s".
-    However, users will discuss broad principles: "State vs Market", "Tech Feasibility (VPN)", "Education", "Privacy".
+    [Context]: "Australia's SNS ban for under-16s".
 
-    [Step 1: Broad Relevance Check] (CRITICAL)
-    * DO NOT look for exact words like "Australia" or "SNS".
-    * ACCEPT if the input discusses:
-      - Market logic vs State interference (e.g., "Why does the state intervene?", "Leave it to the market")
-      - Technical limitations (e.g., "VPN works anyway", "Bypass is easy")
-      - Education vs Regulation (e.g., "Parents should do it", "Teach them instead")
-      - Privacy/Freedom (e.g., "My right to access", "Surveillance")
-    * REJECT ONLY IF:
-      - Pure domestic political slogan WITHOUT policy context (e.g. ONLY "Yoon Out", "Jail Lee").
-      - Completely unrelated (Food, Sports, Weather).
-      -> Output: "REJECT"
+    [Step 1: Relevance Check]
+    * Check broad relevance (State, Market, Tech, Education, Rights).
+    * REJECT ONLY IF: Pure domestic political slogan (e.g. "Yoon Out") OR completely unrelated.
 
-    [Step 2: Logic Distillation]
-    * Political filter: Remove politician names (Yoon, Lee, etc.) but KEEP the argument (e.g., "State shouldn't control markets").
-    * Tone filter: Ignore sarcasm (e.g., "Govt is stupid") and extract the core point.
+    [Step 2: Logic Distillation & Priority Rule] (CRITICAL)
+    Users often combine "Criticism of Current Method" with "Alternative Proposal".
+    * RULE: 'Proposal/Duty' > 'Criticism/Status Quo'.
+    * Example 1: "Blocking is useless (Criticism), Companies should fix algorithms (Proposal)."
+      -> Focus on 'Companies'. Keyword: '기업의 책임' (Corporate Responsibility).
+    * Example 2: "I hate regulation (Criticism), but parents should teach kids (Proposal)."
+      -> Focus on 'Parents'. Keyword: '가정의 역할' or '교육'.
+    * Example 3: "It violates freedom (Criticism)."
+      -> Only then, Keyword: '자유 침해' (Freedom).
 
     [Step 3: Keyword Assignment]
-    * Reuse existing keywords if possible: [{existing_list_str}]
-    * If new, create a KOREAN Noun (max 10 chars).
-    * RULE: NEVER use English for the Keyword. (e.g., 'Market Freedom' -> '시장 자율성', 'State Responsibility' -> '국가의 책임')
+    * Reuse existing keywords: [{existing_list_str}] if they fit the ULTIMATE INTENT.
+    * Or create a KOREAN Noun (max 10 chars). NEVER use English.
 
-    [Step 4: Output Generation]
+    [Step 4: Output]
     * Keyword: KOREAN ONLY.
-    * Short Label: KOREAN summary (max 20 chars).
+    * Short Label: Korean summary (max 20 chars).
     * Full Text: Refined Korean sentence ({tone}).
 
     Format: Keyword|Short Label|Full Refined Text
@@ -144,7 +140,7 @@ def process_opinion_with_gpt(user_text, purity_level):
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
-            temperature=0.1 # 일관성을 위해 낮춤
+            temperature=0.1
         )
         result = response.choices[0].message.content
         
