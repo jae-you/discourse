@@ -60,29 +60,27 @@ if "opinions_df" not in st.session_state:
     ]
     st.session_state.opinions_df = pd.DataFrame(sample_data)
 
-# --- [핵심 1] 개별 의견 분석기 (Gatekeeper & Refiner) ---
+# --- [수정] 의견 분석기 (엄격한 포맷팅 적용) ---
 def analyze_opinion(user_text):
     client = OpenAI(api_key=api_key)
     
     system_prompt = """
-    You are a 'Civic Editor'. analyze the user's input regarding "Australia's SNS Ban".
+    You are a 'Civic Editor'. Analyze the user's input regarding "Australia's SNS Ban".
 
-    [Step 1: Relevance Check - Wide & Deep]
-    * ACCEPT:
-      - Direct mentions (SNS, Ban, Australia).
-      - Technical skepticism (VPN, Bypass, DNS, "It won't work").
-      - Cynical/Realist views (e.g., "Education is fantasy", "Kids will find a way").
-      - Abstract principles (State control, Freedom, Market logic).
-    * REJECT ONLY IF:
-      - Pure domestic political slogan ("Yoon Out", "Lee Out") with NO policy link.
-      - Completely unrelated (Sports, Food).
+    [Step 1: Relevance Check]
+    * ACCEPT: Direct mentions (SNS, Ban), Technical doubts (VPN), Cynicism (Education is fantasy), Abstract values (Freedom).
+    * REJECT: Pure political slogans ("Yoon Out"), Random noise.
 
-    [Step 2: Refinement & Extraction]
-    * Task: Rewrite the core argument into a declarative Korean sentence.
-    * NOTE: If the user is cynical (e.g., "Education is a joke"), Preserve the sharp critique in a formal way (e.g., "Education effectiveness is questionable"). DO NOT water it down to "neutral".
-    * Stance: Label the stance (e.g., 찬성, 반대, 실효성 의문, 기업책임 강조, 대안 비판).
+    [Step 2: Extraction Rules]
+    1. Keyword: Core value in KOREAN Noun (max 10 chars). NO English. (e.g. 'SNS Ban' -> '소셜미디어 금지' or '시장 개입').
+    2. Stance: Choose one [찬성 / 반대 / 실효성 의문 / 대안 제시 / 원칙적 우려].
+    3. Refined Text: Rewrite the core argument into a declarative, formal Korean sentence.
 
-    Output Format: REJECT OR Keyword|Stance|Refined_Text
+    [Step 3: Output Format]
+    * Constraint: If REJECT, output ONLY "REJECT".
+    * Constraint: If ACCEPT, output ONLY the format below (No "Output:", No "ACCEPT" prefix).
+    
+    Keyword|Stance|Refined_Text
     """
     
     try:
@@ -91,17 +89,24 @@ def analyze_opinion(user_text):
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
             temperature=0.1
         )
-        result = response.choices[0].message.content
+        result = response.choices[0].message.content.strip()
+        
+        # [안전장치] "ACCEPT"나 "Output:" 같은 군더더기가 붙어나오면 제거
+        result = result.replace("Output:", "").replace("ACCEPT", "").strip()
         
         if "REJECT" in result:
             return None
             
-        keyword, stance, refined = result.split("|", 2)
-        return {
-            "keyword": keyword.strip(),
-            "stance": stance.strip(),
-            "refined": refined.strip()
-        }
+        # 파이프(|) 기준으로 정확히 3등분
+        if "|" in result:
+            parts = result.split("|")
+            if len(parts) >= 3:
+                return {
+                    "keyword": parts[0].strip(),
+                    "stance": parts[1].strip(),
+                    "refined": parts[2].strip()
+                }
+        return None
     except:
         return None
 
@@ -206,10 +211,22 @@ if not st.session_state.opinions_df.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # 4. 개별 의견 타임라인 (증거 자료)
-    with st.expander("📜 분석에 사용된 시민들의 의견 원문 보기"):
-        for idx, row in st.session_state.opinions_df.iloc[::-1].iterrows(): # 최신순
-            st.markdown(f"**[{row['keyword']}]** {row['refined']} <span style='color:grey; font-size:0.8em'>({row['stance']})</span>", unsafe_allow_html=True)
-
+    # 4. 개별 의견 타임라인 (용어 수정)
+    with st.expander("📜 AI가 정제한 시민 의견 기록 (Live Log)"):
+        # 최신순으로 정렬하여 보여줌
+        for idx, row in st.session_state.opinions_df.iloc[::-1].iterrows():
+            st.markdown(
+                f"""
+                <div style="padding: 10px; border-bottom: 1px solid #374151;">
+                    <span style="color:#60A5FA; font-weight:bold;">[{row['keyword']}]</span>
+                    <span style="color:#E0E0E0;">{row['refined']}</span>
+                    <br>
+                    <span style="color:#9CA3AF; font-size:0.8em; background-color:#374151; padding:2px 6px; border-radius:4px;">
+                        {row['stance']}
+                    </span>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
 else:
     st.info("아직 수집된 의견이 없습니다. 첫 번째 의견을 남겨주세요!")
