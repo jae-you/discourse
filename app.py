@@ -55,13 +55,11 @@ else:
     st.error("⚠️ API 키가 설정되지 않았습니다.")
     st.stop()
 
-# --- 0. 초기 데이터 (안전장치 추가됨 ⭐) ---
-# 기존 세션에 데이터가 있어도, 구버전(full_text 컬럼 없음)이면 강제 리셋합니다.
+# --- 0. 초기 데이터 (데이터 마이그레이션 포함) ---
 should_reset = False
 if "forest_df" not in st.session_state:
     should_reset = True
 else:
-    # 컬럼 검사: 'full_text'가 없으면 구버전 데이터임 -> 리셋 필요
     if "full_text" not in st.session_state.forest_df.columns:
         should_reset = True
 
@@ -74,7 +72,7 @@ if should_reset:
             "알고리즘 중독 기업 책임 강화",
             "연령 인증 시 개인정보 침해 우려",
         ],
-        "full_text": [ # 툴팁용 긴 문장
+        "full_text": [ 
             "우회 기술이 보편화된 상황에서 단순 차단은 실효성이 낮다는 기술적 우려가 있습니다.",
             "청소년의 정신건강 보호를 위해 국가 차원의 규제가 필요하다는 점에 공감합니다.",
             "기술적 차단보다는 미디어 리터러시 교육이 근본적인 해결책이 될 수 있습니다.",
@@ -88,32 +86,36 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [로직] GPT 프롬프트 ---
+# --- [핵심 로직] GPT 프롬프트 (Topic Guard 추가) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     existing_keywords = ", ".join(st.session_state.forest_df['keyword'].unique())
     
-    # 순도에 따른 톤 조절
     if purity_level >= 80:
-        tone_instruction = "Extremely formal, diplomatic, and soft tone. Use euphemisms."
+        tone_instruction = "Extremely formal, diplomatic, and soft tone."
     elif purity_level >= 40:
         tone_instruction = "Polite, objective, and declarative tone."
     else:
         tone_instruction = "Direct and assertive tone. Remove only curse words."
 
+    # [중요] 주제 적합성 판단 로직 추가
     system_prompt = f"""
-    You are a 'Civic Editor'.
-    [Tone Instruction]: {tone_instruction}
+    You are a 'Civic Editor' acting as a Gatekeeper.
     
-    Task 1: REWRITE input into Korean.
-    Task 2: EXTRACT 'Value Keyword' (Noun, max 3 words).
-    Task 3: Create 'Short Label' (max 20 chars).
+    [Step 1: Relevance Check]
+    Check if the user input is relevant to: "Australia's SNS ban for under-16s" or "Social Media Regulation".
+    - If the input is about South Korean domestic politics (e.g., President Yoon, impeachment), Sports, Weather, or completely random nonsense:
+      -> OUTPUT ONLY: "REJECT"
     
-    * Context: Australia's SNS ban under-16.
-    * Existing Keywords: [{existing_keywords}]
+    [Step 2: Processing (Only if Relevant)]
+    If relevant:
+    1. REWRITE input into Korean ({tone_instruction}).
+    2. EXTRACT 'Value Keyword' (Noun, max 3 words).
+    3. Create 'Short Label' (max 20 chars).
     
     Format: Keyword|Short Label|Full Refined Text
     """
+    
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -121,6 +123,11 @@ def process_opinion_with_gpt(user_text, purity_level):
             temperature=0.3
         )
         result = response.choices[0].message.content
+        
+        # 주제 이탈 시 거부 처리
+        if "REJECT" in result:
+            return "REJECT"
+            
         keyword, short_label, full_text = result.split("|", 2)
         return {
             "keyword": keyword.strip(),
@@ -132,7 +139,6 @@ def process_opinion_with_gpt(user_text, purity_level):
 
 # --- [로직] 유사도 병합 ---
 def merge_opinion(new_full_text, keyword, df):
-    # 키워드가 같은 것 중에서 문장이 비슷하면 병합
     subset = df[df['keyword'] == keyword]
     for idx, row in subset.iterrows():
         similarity = difflib.SequenceMatcher(None, new_full_text, row['full_text']).ratio()
@@ -164,13 +170,17 @@ with col_input:
     user_input = st.text_input("생각 입력", label_visibility="collapsed", placeholder="예: 무조건 막는 건 답이 아닙니다. 교육이 먼저죠.")
 
 with col_opt:
-    purity = st.slider("정제 강도 (Mildness)", 0, 100, 70, help="낮을수록 직설적, 높을수록 완곡하게 표현됩니다.")
+    purity = st.slider("정제 강도", 0, 100, 70, help="낮을수록 직설적, 높을수록 완곡하게 표현됩니다.")
     submit = st.button("숲에 심기 🌱", type="primary", use_container_width=True)
 
 if submit and user_input:
-    with st.spinner("AI가 의견을 다듬고 있습니다..."):
+    with st.spinner("AI가 의견을 검토하고 있습니다..."):
         res = process_opinion_with_gpt(user_input, purity)
-        if res:
+        
+        # [수정] 결과 처리 로직 분기
+        if res == "REJECT":
+            st.error("🚫 주제와 무관한 의견(국내 정치, 비방, 잡담 등)은 정원에 심을 수 없습니다.")
+        elif res:
             idx, merged = merge_opinion(res['full_text'], res['keyword'], st.session_state.forest_df)
             
             if merged:
@@ -189,6 +199,8 @@ if submit and user_input:
             st.success(msg)
             time.sleep(1.0)
             st.rerun()
+        else:
+            st.error("오류가 발생했습니다. 다시 시도해주세요.")
 
 st.divider()
 
