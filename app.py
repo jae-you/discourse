@@ -36,8 +36,17 @@ else:
     st.error("⚠️ API 키가 설정되지 않았습니다.")
     st.stop()
 
-# --- 0. 초기 데이터 (찬반 대립 구조) ---
+# --- 0. 초기 데이터 (데이터 마이그레이션 로직 추가 ⭐) ---
+# 기존 세션에 데이터가 있어도, 구버전(polarity 컬럼 없음)이면 강제 리셋합니다.
+should_reset = False
 if "matrix_df" not in st.session_state:
+    should_reset = True
+else:
+    # 컬럼 검사: 'polarity'가 없으면 구버전 데이터임 -> 리셋 필요
+    if "polarity" not in st.session_state.matrix_df.columns:
+        should_reset = True
+
+if should_reset:
     data = {
         "keyword": ["기술적 실효성", "국가의 보호책무", "프라이버시", "플랫폼의 책임", "리터러시 교육"],
         "summary": [
@@ -48,7 +57,7 @@ if "matrix_df" not in st.session_state:
             "강제 차단보다는 스스로 제어할 수 있는 디지털 리터러시 교육이 중요함"
         ],
         "count": [45, 30, 20, 25, 40],  # 관심도
-        "polarity": [-0.8, 0.9, -0.7, 0.6, 0.1], # -1(반대) ~ +1(찬성). 0에 가까우면 중립/양쪽 모두 동의
+        "polarity": [-0.8, 0.9, -0.7, 0.6, 0.1], # -1(반대) ~ +1(찬성)
         "side": ["반대(자율)", "찬성(규제)", "반대(자율)", "찬성(규제)", "공통(대안)"] 
     }
     st.session_state.matrix_df = pd.DataFrame(data)
@@ -56,8 +65,6 @@ if "matrix_df" not in st.session_state:
 # --- [핵심 로직] GPT 프롬프트 (입장 분석) ---
 def analyze_opinion(user_text):
     client = OpenAI(api_key=api_key)
-    
-    # 기존 키워드 참조
     existing_keywords = ", ".join(st.session_state.matrix_df['keyword'].unique())
 
     system_prompt = f"""
@@ -71,9 +78,9 @@ def analyze_opinion(user_text):
     1. Keyword: Core value (Korean Noun, max 10 chars). NO generic words (SNS, Govt).
     2. Summary: One formal Korean sentence.
     3. Polarity Score (-1.0 to 1.0):
-       * -1.0 ~ -0.5: Strongly Against Ban (Focus on Freedom, Tech limits, Privacy).
-       * 0.5 ~ 1.0: Strongly Support Ban (Focus on Protection, Addiction, State Duty).
-       * -0.4 ~ 0.4: Neutral / Alternative / Bridge (Focus on Education, Corporate Responsibility, Awareness).
+       * -1.0 ~ -0.5: Strongly Against Ban (Freedom, Tech limits, Privacy).
+       * 0.5 ~ 1.0: Strongly Support Ban (Protection, Addiction, State Duty).
+       * -0.4 ~ 0.4: Neutral / Alternative / Bridge (Education, Corporate Responsibility).
 
     Format: Keyword|Summary|Polarity_Score
     """
@@ -100,15 +107,11 @@ def analyze_opinion(user_text):
 
 # --- [로직] 브릿지 발견 알고리즘 ---
 def find_bridges(df):
-    # 찬성측 상위 키워드와 반대측 상위 키워드, 그리고 중립지대 키워드를 분석
-    # 여기서는 간단하게 'Polarity 절대값이 낮은(0에 가까운)' 키워드를 브릿지로 간주
-    # 또는 '관심도(count)'는 높은데 '성향(polarity)'이 중도인 것을 찾음
-    
+    # Polarity 절대값이 0.4 미만이고(중도/대안), 관심도가 높은 것
     bridges = df[
-        (df['polarity'].abs() < 0.4) &  # 성향이 극단적이지 않고
-        (df['count'] > 10)              # 사람들의 관심이 높은 것
+        (df['polarity'].abs() < 0.4) & 
+        (df['count'] > 10)
     ].sort_values(by='count', ascending=False)
-    
     return bridges
 
 # ================= UI 시작 =================
@@ -116,7 +119,7 @@ def find_bridges(df):
 st.title("🌉 Deep Agora: 갈등과 다리")
 st.caption("우리는 어디서 갈라지고, 어디서 만나는가? 양극단의 주장 속에서 '연결고리'를 찾습니다.")
 
-# 1. 브릿지 리포트 (가장 상단에 배치하여 합의 강조)
+# 1. 브릿지 리포트
 bridges = find_bridges(st.session_state.matrix_df)
 
 if not bridges.empty:
@@ -139,10 +142,9 @@ with col_main:
     
     df = st.session_state.matrix_df
     
-    # 색상 지정 로직
+    # 색상 지정
     df['color'] = df['polarity'].apply(lambda x: '#FF5252' if x < -0.3 else ('#448AFF' if x > 0.3 else '#69F0AE'))
     
-    # Scatter Plot
     fig = px.scatter(
         df, 
         x="polarity", 
@@ -157,7 +159,6 @@ with col_main:
     
     fig.update_traces(marker=dict(color=df['color']), textposition='top center', textfont=dict(size=14, weight='bold'))
     
-    # 디자인
     fig.update_layout(
         plot_bgcolor="#161B22",
         paper_bgcolor="#0E1117",
@@ -183,11 +184,9 @@ with col_side:
                     if res == "REJECT":
                         st.error("🚫 주제와 무관한 내용은 반영되지 않습니다.")
                     elif res:
-                        # 중복 병합 (간이 로직)
                         if res['keyword'] in st.session_state.matrix_df['keyword'].values:
                             idx = st.session_state.matrix_df.index[st.session_state.matrix_df['keyword'] == res['keyword']].tolist()[0]
                             st.session_state.matrix_df.at[idx, 'count'] += 5
-                            # 성향값 평균내서 업데이트 (약간의 이동 효과)
                             old_pol = st.session_state.matrix_df.at[idx, 'polarity']
                             st.session_state.matrix_df.at[idx, 'polarity'] = (old_pol + res['polarity']) / 2
                             st.success(f"'{res['keyword']}' 이슈가 더 커지고 위치가 조정되었습니다!")
@@ -197,7 +196,7 @@ with col_side:
                                 "summary": res['summary'],
                                 "count": 10, 
                                 "polarity": res['polarity'],
-                                "side": "중립" # 시각화엔 안쓰임
+                                "side": "중립"
                             }
                             st.session_state.matrix_df = pd.concat([pd.DataFrame([new_row]), st.session_state.matrix_df], ignore_index=True)
                             st.success(f"새로운 관점 '{res['keyword']}'이 지도에 등장했습니다!")
@@ -205,19 +204,16 @@ with col_side:
                         time.sleep(1)
                         st.rerun()
 
-    # 우선순위 탭 (쟁점 vs 다리)
     st.markdown("### 📋 분석 리포트")
     tab1, tab2 = st.tabs(["🔥 치열한 쟁점", "🌉 합의의 다리"])
     
     with tab1:
-        # 양극단에 있는 것들 (Polarity 절대값이 큰 순서)
         conflicts = df[df['polarity'].abs() > 0.4].sort_values(by='count', ascending=False)
         for _, row in conflicts.iterrows():
             icon = "🛡️" if row['polarity'] > 0 else "🚫"
             st.markdown(f"**{icon} {row['keyword']}**")
             
     with tab2:
-        # 가운데에 있는 것들
         bridges_list = find_bridges(df)
         if not bridges_list.empty:
             for _, row in bridges_list.iterrows():
