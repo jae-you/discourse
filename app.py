@@ -86,12 +86,11 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [핵심 로직] GPT 프롬프트 (정치적 비유 제거 강화) ---
+# --- [최종 수정] GPT 프롬프트 (추상적/원론적 주장 수용) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     existing_keywords = ", ".join(st.session_state.forest_df['keyword'].unique())
     
-    # 순도 레벨에 따른 톤 설정
     if purity_level >= 80:
         tone_instruction = "Extremely formal, diplomatic, and soft tone."
     elif purity_level >= 40:
@@ -99,31 +98,26 @@ def process_opinion_with_gpt(user_text, purity_level):
     else:
         tone_instruction = "Direct and assertive tone. Remove only curse words."
 
-# [수정된 프롬프트] 노이즈 제거 능력을 대폭 강화했습니다.
     system_prompt = f"""
-    You are a 'Civic Editor' acting as a Gatekeeper and Logic Distiller.
+    You are a 'Civic Editor' acting as a Contextual Interpreter.
     
-    [Step 1: Relevance Check]
-    Check if the input is logically related to: "Australia's SNS ban" or "Social Media Regulation".
-    * REJECT ONLY IF: Pure domestic politics (e.g. just shouting "Impeach President"), Sports, Food, or gibberish with NO link to the topic.
+    [Context]: The current debate is about "Australia's ban on SNS for under-16s".
+    
+    [Step 1: Relevance & Context Check]
+    The user might argue based on abstract principles (e.g., "Market Logic", "State Interference", "Freedom") without explicitly mentioning "SNS" or "Australia".
+    * RULE: If the input discusses 'State vs Market', 'Regulation', 'Freedom', or 'Protection', ASSUME it applies to this SNS ban topic.
+    * RULE: Even if it sounds like a general political complaint (e.g., "Why does the state always interfere?"), ACCEPT it as an argument against the ban.
+    * REJECT ONLY IF: It is PURELY about unrelated South Korean domestic scandals (e.g., "Investigate the First Lady", "Impeach the President") with NO logical link to policy/regulation.
 
-    [Step 2: Logic Distillation] (CRITICAL)
-    Users often mix "Political Cynicism/Sarcasm" with "Policy Opinions".
-    * TASK: Ignore the cynicism (e.g., "Govt is useless", "Like the old days") and EXTRACT ONLY the policy suggestion.
-    * KEYWORD STRATEGY: Look for conjunctions like "아무튼(Anyway)", "그래도(Still)", "솔직히(Honestly)" which often signal the transition from noise to the real argument.
-    * REMOVE: Specific politician names (Lee Jae-myung, Yoon Suk-yeol, etc.), party names, and emotional attacks.
+    [Step 2: Logic Distillation]
+    1. Remove specific politician names (e.g., Lee Jae-myung, Yoon Suk-yeol) but KEEP the policy argument behind it.
+    2. Remove cynicism (e.g., "Govt is useless anyway") and keep the core stance.
+    
+    [Step 3: Output Generation]
+    * Keyword: Extract the core value (e.g., 'Market Freedom', 'State Responsibility').
+    * Short Label: Max 20 chars.
+    * Full Text: Rewrite in Korean ({tone_instruction}).
 
-    [Examples for Training]
-    1. Input: "이재명정부가 뭐 제대로 하는게 있나 모르겠지만 아무튼 우리도 sns 못쓰게 하긴 해야함"
-       -> Analysis: "Govt doing nothing" is noise. "We should block SNS" is the signal.
-       -> Output: 청소년 보호 | 국가 규제 필요 | 현 정부에 대한 시각과는 별개로, 우리나라도 청소년 SNS 사용을 제한하는 조치가 필요하다는 의견입니다.
-
-    2. Input: "윤석열 꼴보기 싫어서 반대하고 싶은데, 솔직히 애들 중독된거 보면 막는게 맞긴 함"
-       -> Analysis: "Hate Yoon" is noise. "Blocking is right due to addiction" is the signal.
-       -> Output: 청소년 보호 | 중독 예방 | 정치적 성향을 떠나, 청소년의 심각한 중독 문제를 고려할 때 차단 조치가 타당하다는 지적입니다.
-
-    [Step 3: Final Output]
-    Tone: {tone_instruction}
     Format: Keyword|Short Label|Full Refined Text
     """
     
@@ -146,7 +140,7 @@ def process_opinion_with_gpt(user_text, purity_level):
         }
     except:
         return None
-
+        
 # --- [로직] 유사도 병합 ---
 def merge_opinion(new_full_text, keyword, df):
     subset = df[df['keyword'] == keyword]
