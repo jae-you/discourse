@@ -7,8 +7,41 @@ from openai import OpenAI
 # [설정] 페이지 기본 세팅
 st.set_page_config(page_title="Deep Agora: 숙의의 정원", layout="wide", page_icon="🌿")
 
-# --- 0. 초기 데이터 및 상태 설정 (Session State) ---
-# 새로고침해도 데이터가 날아가지 않도록 session_state에 저장합니다.
+# --- [보안 1] 간단한 비밀번호 기능 (선택 사항) ---
+# 외부인이 아무나 들어와서 API를 남용하지 못하게 막습니다.
+def check_password():
+    """로그인 성공 여부를 반환합니다."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+
+    if st.session_state.password_correct:
+        return True
+
+    st.markdown("### 🔒 접속 권한 확인")
+    password = st.text_input("비밀번호를 입력하세요", type="password")
+    
+    # [설정] 원하는 비밀번호를 'snu1234' 부분에 바꾸세요
+    if password == "snu1234":
+        st.session_state.password_correct = True
+        st.rerun()
+    elif password:
+        st.error("비밀번호가 틀렸습니다.")
+    
+    return False
+
+# 비밀번호가 틀리면 여기서 멈춤 (앱 내용 안 보여줌)
+if not check_password():
+    st.stop()
+
+# --- [보안 2] API 키 로드 (Secrets 우선 사용) ---
+# 로컬에서는 secrets.toml을, 배포 서버에서는 Cloud Secrets를 자동으로 가져옵니다.
+if "OPENAI_API_KEY" in st.secrets:
+    api_key = st.secrets["OPENAI_API_KEY"]
+else:
+    st.error("⚠️ API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
+    st.stop()
+
+# --- 0. 초기 데이터 및 상태 설정 ---
 if "comments_df" not in st.session_state:
     data = {
         "original_text": [
@@ -37,23 +70,11 @@ if "comments_df" not in st.session_state:
     }
     st.session_state.comments_df = pd.DataFrame(data)
 
-# --- 1. OpenAI 연동 함수 (논문의 Collaborative Prompt 적용) ---
-def process_opinion_with_gpt(api_key, user_text):
-    """
-    GPT를 사용하여 1) 패러프레이징(협력적 스타일) 2) 주제 분류를 수행합니다.
-    """
-    if not api_key:
-        # 키가 없을 경우 시뮬레이션 모드 동작
-        time.sleep(1)
-        return {
-            "refined": f"(시뮬레이션) {user_text} - 라는 의견을 협력적으로 다듬었습니다.",
-            "topic": random.choice(["실효성 및 기술", "보호 및 규제 필요성", "프라이버시/기본권"]),
-            "score": random.uniform(0.7, 0.95)
-        }
-
+# --- 1. OpenAI 연동 함수 ---
+def process_opinion_with_gpt(user_text):
     client = OpenAI(api_key=api_key)
     
-    # 논문 Appendix A의 Collaborative Prompt + 주제 분류 요청
+    # 논문 기반 '협력적(Collaborative)' 스타일 프롬프트
     system_prompt = """
     You are a 'Mediation Machine' specializing in the COLLABORATING style.
     Your task:
@@ -66,7 +87,7 @@ def process_opinion_with_gpt(api_key, user_text):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini", # 또는 gpt-3.5-turbo
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text}
@@ -74,9 +95,9 @@ def process_opinion_with_gpt(api_key, user_text):
         )
         result = response.choices[0].message.content
         topic, refined = result.split("|", 1)
-        return {"refined": refined.strip(), "topic": topic.strip(), "score": 0.95} # New inputs get high visibility initially
+        return {"refined": refined.strip(), "topic": topic.strip(), "score": 0.95}
     except Exception as e:
-        st.error(f"OpenAI Error: {e}")
+        st.error(f"AI 처리 중 오류가 발생했습니다: {e}")
         return None
 
 # --- 2. UI: 헤더 및 뉴스 브리핑 (Context Injection) ---
@@ -84,62 +105,55 @@ st.title("🌿 Deep Agora: 의견 정원")
 
 # [중요] 뉴스 브리핑 섹션 (사용자가 맥락을 파악하도록 함)
 with st.container(border=True):
-    col_news_l, col_news_r = st.columns([1, 4])
+    col_news_l, col_news_r = st.columns([1, 5])
     with col_news_l:
-        st.image("https://img.icons8.com/fluency/96/news.png", width=80)
+        st.write("📢 **[이슈 브리핑]**")
     with col_news_r:
-        st.subheader("📢 [이슈] 호주, 16세 미만 SNS 사용 원천 차단 추진")
+        st.subheader("호주, 16세 미만 SNS 사용 원천 차단 추진")
         st.markdown("""
-        **핵심 내용:** 호주 정부가 세계 최초로 16세 미만 청소년의 소셜미디어(SNS) 계정 보유를 금지하는 법안을 시행합니다. 
-        기업은 연령 확인 의무를 지며 위반 시 거액의 벌금을 물게 됩니다.
+        **핵심 내용:** 호주 정부가 16세 미만 청소년의 소셜미디어 계정 보유를 금지하는 법안을 시행합니다. 
+        기업은 연령 확인 의무를 지며 위반 시 거액의 벌금을 뭅니다.
         
-        **논의 쟁점:**
+        **주요 쟁점:**
         * 🛡️ **찬성:** "청소년 정신건강 보호 및 중독 방지"
-        * 🚫 **반대:** "실효성 부족(VPN 우회), 프라이버시 침해, 청소년 소통 권리 박탈"
+        * 🚫 **반대:** "실효성 부족(우회 가능), 프라이버시 침해, 소통 권리 박탈"
         """)
 
 st.divider()
 
-# --- 3. 사이드바 및 필터 ---
+# --- 3. 사이드바 (필터만 남김) ---
 with st.sidebar:
-    st.header("⚙️ 설정 & 필터")
+    st.header("⚙️ 정원 가꾸기")
+    st.caption("✅ 공용 AI 엔진이 가동 중입니다.") # 사용자 안심 멘트
     
-    # OpenAI API Key 입력 (비밀번호 타입)
-    api_key = st.text_input("OpenAI API Key", type="password", help="키를 입력하면 실제 AI가 동작합니다. 없으면 시뮬레이션 모드로 작동합니다.")
-    
-    st.divider()
-    st.caption("정원 가꾸기")
     min_quality = st.slider("품격 필터 (욕설/비난 제외)", 0.0, 1.0, 0.4)
     st.info("💡 '품격 필터'를 높이면 감정적인 소음은 사라지고 논리적인 신호만 남습니다.")
 
-# --- 4. 메인 화면: 의견 정원 (DataFrame 기반 렌더링) ---
-df = st.session_state.comments_df # Session State에서 데이터 로드
+# --- 4. 메인 화면: 의견 정원 ---
+df = st.session_state.comments_df
 
 col1, col2, col3 = st.columns(3)
-topics = ["실효성 및 기술", "보호 및 규제 필요성", "프라이버시/기본권"] # 고정된 3개 주제 화분
+topics = ["실효성 및 기술", "보호 및 규제 필요성", "프라이버시/기본권"]
 cols = [col1, col2, col3]
 
 for i, topic in enumerate(topics):
     with cols[i]:
         st.subheader(f"📌 {topic}")
         
-        # 필터링 및 정렬
         topic_df = df[
             (df["topic_cluster"] == topic) & 
             (df["civility_score"] >= min_quality)
         ].sort_values(by="representative_score", ascending=False)
         
-        for idx, row in topic_df.head(4).iterrows(): # 상위 4개까지만 표시
+        for idx, row in topic_df.head(4).iterrows():
             with st.container(border=True):
-                # AI 정제 텍스트 강조
                 st.markdown(f"**🗣️ {row['refined_text']}**")
                 st.progress(row['representative_score'], text="논리적 대표성")
                 
-                # 원문 보기 (투명성)
                 with st.expander("원문 확인"):
                     st.caption(f"Original: {row['original_text']}")
 
-# --- 5. 의견 심기 (Action Section) ---
+# --- 5. 의견 심기 ---
 st.divider()
 st.markdown("### 🌱 정원에 당신의 의견 심기")
 
@@ -150,34 +164,31 @@ with st.container(border=True):
         new_opinion = st.text_input("의견을 입력하세요", placeholder="예: 무조건 막는다고 해결될까요? 교육이 더 중요하다고 봅니다.")
     
     with col_btn:
-        st.write("") # 줄맞춤용
-        st.write("") 
+        st.write("")
+        st.write("")
         submit_btn = st.button("심기", use_container_width=True, type="primary")
 
     if submit_btn and new_opinion:
         with st.spinner("AI가 당신의 의견을 다듬어 정원에 심고 있습니다..."):
-            # 1. GPT 호출 (또는 시뮬레이션)
-            processed_data = process_opinion_with_gpt(api_key, new_opinion)
+            processed_data = process_opinion_with_gpt(new_opinion)
             
             if processed_data:
-                # 2. DataFrame에 새 행 추가
                 new_row = {
                     "original_text": new_opinion,
                     "refined_text": processed_data["refined"],
-                    "topic_cluster": processed_data["topic"], # AI가 분류한 주제로 자동 배정
-                    "civility_score": 1.0, # 방금 심은 의견은 우선 필터 통과하도록 설정
+                    "topic_cluster": processed_data["topic"],
+                    "civility_score": 1.0,
                     "representative_score": processed_data["score"]
                 }
                 
-                # Session State 업데이트
                 st.session_state.comments_df = pd.concat(
                     [pd.DataFrame([new_row]), st.session_state.comments_df], 
                     ignore_index=True
                 )
                 
-                st.success("의견이 성공적으로 반영되었습니다! 위쪽 정원에서 확인해보세요.")
-                time.sleep(1.5)
-                st.rerun() # 화면 새로고침하여 즉시 반영
+                st.success("의견이 반영되었습니다!")
+                time.sleep(1)
+                st.rerun()
 
 # --- 6. 하단: 공통의 기반 ---
 st.markdown("---")
