@@ -1,31 +1,36 @@
 import streamlit as st
 import pandas as pd
 import time
-import plotly.express as px
 from openai import OpenAI
 
 # [설정] 페이지 기본 세팅
-st.set_page_config(page_title="Deep Agora: 갈등과 다리", layout="wide", page_icon="🌉")
+st.set_page_config(page_title="Deep Agora: 숙의 리포트", layout="wide", page_icon="📝")
 
-# --- [스타일] CSS (Dark & Professional) ---
+# --- [스타일] CSS (Dark & Report Style) ---
 st.markdown("""
 <style>
     .stApp { background-color: #0E1117; }
-    h1, h2, h3 { color: #E0E0E0 !important; font-family: 'Pretendard'; }
+    h1, h2, h3, h4 { color: #E0E0E0 !important; font-family: 'Pretendard'; }
     .stMarkdown, p, div, li { color: #B0B8C4; font-weight: 400 !important; }
     
-    /* 브릿지 카드 스타일 */
-    .bridge-card {
-        background: linear-gradient(90deg, #1E2329 0%, #2D333B 50%, #1E2329 100%);
-        border: 2px solid #4CAF50;
-        border-radius: 15px;
+    /* 리포트 카드 스타일 */
+    .report-card {
+        background-color: #1F2937;
         padding: 20px;
-        text-align: center;
-        margin-bottom: 20px;
-        box-shadow: 0 0 15px rgba(76, 175, 80, 0.3);
+        border-radius: 10px;
+        border-left: 4px solid #3B82F6;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .bridge-title { color: #4CAF50; font-weight: bold; font-size: 1.2em; }
-    .bridge-text { color: white; font-size: 1.1em; margin-top: 10px; }
+    .report-title { font-size: 1.1em; font-weight: bold; color: #60A5FA; margin-bottom: 8px; }
+    .report-content { font-size: 1.0em; color: #E5E7EB; line-height: 1.6; }
+    
+    /* 입력창 */
+    .stTextInput > div > div > input {
+        background-color: #21262D !important;
+        color: white !important;
+        border: 1px solid #30363D;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,53 +41,48 @@ else:
     st.error("⚠️ API 키가 설정되지 않았습니다.")
     st.stop()
 
-# --- 0. 초기 데이터 (데이터 마이그레이션 로직 추가 ⭐) ---
-# 기존 세션에 데이터가 있어도, 구버전(polarity 컬럼 없음)이면 강제 리셋합니다.
-should_reset = False
-if "matrix_df" not in st.session_state:
-    should_reset = True
-else:
-    # 컬럼 검사: 'polarity'가 없으면 구버전 데이터임 -> 리셋 필요
-    if "polarity" not in st.session_state.matrix_df.columns:
-        should_reset = True
-
-if should_reset:
+# --- 0. 초기 데이터 ---
+if "opinions_df" not in st.session_state:
     data = {
-        "keyword": ["기술적 실효성", "국가의 보호책무", "프라이버시", "플랫폼의 책임", "리터러시 교육"],
-        "summary": [
-            "VPN 우회 등 기술적 한계로 인해 차단 정책은 실효성이 없다는 비판",
-            "국가는 유해 환경으로부터 청소년을 보호할 헌법적 의무를 져야 함",
-            "과도한 인증은 감시 사회를 초래하며 개인의 프라이버시를 침해함",
-            "중독 알고리즘으로 수익을 낸 플랫폼 기업에 강력한 책임을 물어야 함",
-            "강제 차단보다는 스스로 제어할 수 있는 디지털 리터러시 교육이 중요함"
-        ],
-        "count": [45, 30, 20, 25, 40],  # 관심도
-        "polarity": [-0.8, 0.9, -0.7, 0.6, 0.1], # -1(반대) ~ +1(찬성)
-        "side": ["반대(자율)", "찬성(규제)", "반대(자율)", "찬성(규제)", "공통(대안)"] 
+        "original": [],
+        "refined": [],
+        "keyword": [],
+        "stance": [] # 찬성/반대/회의적/대안제시 등
     }
-    st.session_state.matrix_df = pd.DataFrame(data)
+    st.session_state.opinions_df = pd.DataFrame(data)
+    
+    # 초기 샘플 데이터 (다양한 뉘앙스)
+    sample_data = [
+        {"original": "애들은 보호해야지 당연한거 아님?", "refined": "청소년을 유해 환경으로부터 보호하는 것은 국가의 당연한 책무입니다.", "keyword": "국가 책임", "stance": "원칙적 찬성"},
+        {"original": "VPN 쓰면 그만인데 뭔 소용 ㅋㅋ", "refined": "VPN 등 우회 기술이 보편화된 상황에서 차단 정책은 실효성이 없다는 현실적 지적입니다.", "keyword": "기술적 실효성", "stance": "현실적 반론"},
+        {"original": "교육으로 해결한다고? 그거 다 환상이야 정신차려", "refined": "미디어 교육만으로는 급변하는 중독 문제를 해결하기에 역부족이라는 강력한 우려가 있습니다.", "keyword": "교육의 한계", "stance": "대안 비판"},
+        {"original": "기업들이 알고리즘 장난질 치는게 문제임", "refined": "중독성 강한 알고리즘을 방치한 플랫폼 기업에 대한 규제와 책임 강화가 선행되어야 합니다.", "keyword": "기업 책임", "stance": "구조적 원인 지적"}
+    ]
+    st.session_state.opinions_df = pd.DataFrame(sample_data)
 
-# --- [핵심 로직] GPT 프롬프트 (입장 분석) ---
+# --- [핵심 1] 개별 의견 분석기 (Gatekeeper & Refiner) ---
 def analyze_opinion(user_text):
     client = OpenAI(api_key=api_key)
-    existing_keywords = ", ".join(st.session_state.matrix_df['keyword'].unique())
-
-    system_prompt = f"""
-    You are a 'Policy Analyst'. Analyze the input regarding "Australia's SNS Ban".
     
-    [Step 1: Political Noise Filter]
-    * IF input is purely political slogans (e.g. "Yoon Out") -> OUTPUT: "REJECT"
-    * IF input uses politicians as metaphors -> IGNORE names, EXTRACT policy argument.
+    system_prompt = """
+    You are a 'Civic Editor'. analyze the user's input regarding "Australia's SNS Ban".
 
-    [Step 2: Analysis]
-    1. Keyword: Core value (Korean Noun, max 10 chars). NO generic words (SNS, Govt).
-    2. Summary: One formal Korean sentence.
-    3. Polarity Score (-1.0 to 1.0):
-       * -1.0 ~ -0.5: Strongly Against Ban (Freedom, Tech limits, Privacy).
-       * 0.5 ~ 1.0: Strongly Support Ban (Protection, Addiction, State Duty).
-       * -0.4 ~ 0.4: Neutral / Alternative / Bridge (Education, Corporate Responsibility).
+    [Step 1: Relevance Check - Wide & Deep]
+    * ACCEPT:
+      - Direct mentions (SNS, Ban, Australia).
+      - Technical skepticism (VPN, Bypass, DNS, "It won't work").
+      - Cynical/Realist views (e.g., "Education is fantasy", "Kids will find a way").
+      - Abstract principles (State control, Freedom, Market logic).
+    * REJECT ONLY IF:
+      - Pure domestic political slogan ("Yoon Out", "Lee Out") with NO policy link.
+      - Completely unrelated (Sports, Food).
 
-    Format: Keyword|Summary|Polarity_Score
+    [Step 2: Refinement & Extraction]
+    * Task: Rewrite the core argument into a declarative Korean sentence.
+    * NOTE: If the user is cynical (e.g., "Education is a joke"), Preserve the sharp critique in a formal way (e.g., "Education effectiveness is questionable"). DO NOT water it down to "neutral".
+    * Stance: Label the stance (e.g., 찬성, 반대, 실효성 의문, 기업책임 강조, 대안 비판).
+
+    Output Format: REJECT OR Keyword|Stance|Refined_Text
     """
     
     try:
@@ -94,130 +94,122 @@ def analyze_opinion(user_text):
         result = response.choices[0].message.content
         
         if "REJECT" in result:
-            return "REJECT"
+            return None
             
-        parts = result.split("|")
+        keyword, stance, refined = result.split("|", 2)
         return {
-            "keyword": parts[0].strip(),
-            "summary": parts[1].strip(),
-            "polarity": float(parts[2].strip())
+            "keyword": keyword.strip(),
+            "stance": stance.strip(),
+            "refined": refined.strip()
         }
     except:
         return None
 
-# --- [로직] 브릿지 발견 알고리즘 ---
-def find_bridges(df):
-    # Polarity 절대값이 0.4 미만이고(중도/대안), 관심도가 높은 것
-    bridges = df[
-        (df['polarity'].abs() < 0.4) & 
-        (df['count'] > 10)
-    ].sort_values(by='count', ascending=False)
-    return bridges
+# --- [핵심 2] 종합 리포트 생성기 (The Insight Generator) ---
+def generate_insight_report(df):
+    client = OpenAI(api_key=api_key)
+    
+    # 최근 의견들을 텍스트로 변환해서 프롬프트에 넣음
+    all_opinions = "\n".join([f"- [{row['keyword']}/{row['stance']}] {row['refined']}" for _, row in df.iterrows()])
+    
+    system_prompt = """
+    You are a 'Public Opinion Analyst'. Read the collected opinions and generate a structued 'Civic Report'.
+    
+    [Report Structure]
+    1. 🌉 합의의 흐름 (Consensus Flow): What is the common ground? (e.g., "Everyone agrees kids need protection, but...")
+    2. ⚡ 핵심 쟁점과 반론 (Key Conflicts): What are the sharpest counterarguments? (Highlight technical doubts like VPN, or skepticism about education).
+    3. 💡 우리가 놓친 질문 (Remaining Questions): What perspective needs more thought?
+    
+    * Style: Insightful, objective, and high-quality Korean.
+    * Length: Concise (3-4 sentences per section).
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", # 리포트는 분석이 필요하니 mini나 4o 사용
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Here are the citizens' opinions:\n{all_opinions}"}
+            ],
+            temperature=0.5
+        )
+        return response.choices[0].message.content
+    except:
+        return "리포트 생성 중 오류가 발생했습니다."
 
 # ================= UI 시작 =================
 
-st.title("🌉 Deep Agora: 갈등과 다리")
-st.caption("우리는 어디서 갈라지고, 어디서 만나는가? 양극단의 주장 속에서 '연결고리'를 찾습니다.")
+st.title("📝 Deep Agora: 숙의 리포트")
+st.caption("파편화된 댓글이 아니라, 정리된 하나의 흐름으로 봅니다.")
 
-# 1. 브릿지 리포트
-bridges = find_bridges(st.session_state.matrix_df)
+# 1. 뉴스 브리핑
+with st.expander("📢 [이슈 브리핑] 호주 16세 미만 SNS 원천 차단", expanded=False):
+    st.markdown("""
+    호주 정부가 청소년 정신건강 보호를 위해 16세 미만의 SNS 계정 보유를 금지하는 법안을 추진합니다.
+    **핵심 논점:** 국가의 강제적 개입이 정당한가? vs 기술적으로 실효성이 있는가? vs 기업의 책임은?
+    [🔗 기사 원문 보기](https://www.yna.co.kr/view/AKR20251209006700084?input=1195m)
+    """)
 
-if not bridges.empty:
-    top_bridge = bridges.iloc[0]
-    st.markdown(f"""
-    <div class="bridge-card">
-        <span class="bridge-title">🤝 우리가 발견한 합의의 다리</span>
-        <div class="bridge-text">
-            서로 다른 입장이지만, <b>'{top_bridge['keyword']}'</b>의 중요성에는 모두가 공감하고 있습니다.<br>
-            <span style="font-size:0.8em; color:#B0B8C4;">"{top_bridge['summary']}"</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+st.divider()
 
-col_main, col_side = st.columns([3, 1.5])
+# 2. 의견 입력 (Action)
+col_input, col_btn = st.columns([4, 1])
+with col_input:
+    user_input = st.text_input("당신의 생각은?", placeholder="예: 교육만으로는 안 돼. 이건 마약이랑 같아서 강제력이 필요해.")
+with col_btn:
+    submit = st.button("의견 보태기 ✍️", type="primary", use_container_width=True)
 
-# --- [메인 시각화] 갈등 지형도 ---
-with col_main:
-    st.markdown("### 🗺️ 갈등 지형도 (Polarity Map)")
-    
-    df = st.session_state.matrix_df
-    
-    # 색상 지정
-    df['color'] = df['polarity'].apply(lambda x: '#FF5252' if x < -0.3 else ('#448AFF' if x > 0.3 else '#69F0AE'))
-    
-    fig = px.scatter(
-        df, 
-        x="polarity", 
-        y="count", 
-        size="count", 
-        text="keyword",
-        hover_name="summary",
-        range_x=[-1.2, 1.2],
-        range_y=[0, df['count'].max() + 20],
-        size_max=60
-    )
-    
-    fig.update_traces(marker=dict(color=df['color']), textposition='top center', textfont=dict(size=14, weight='bold'))
-    
-    fig.update_layout(
-        plot_bgcolor="#161B22",
-        paper_bgcolor="#0E1117",
-        font=dict(color="#E0E0E0", family="Pretendard", size=14),
-        xaxis=dict(title="◀ 반대 (자율/기술) --------- 중립/대안 --------- 찬성 (규제/보호) ▶", showgrid=True, gridcolor="#30363D", zeroline=True, zerolinecolor="white"),
-        yaxis=dict(title="논의 강도 (관심도) ▲", showgrid=True, gridcolor="#30363D"),
-        showlegend=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-# --- [사이드바] 의견 입력 ---
-with col_side:
-    st.markdown("### 🗣️ 당신의 입장은?")
-    with st.container(border=True):
-        user_input = st.text_area("의견을 남겨주세요", height=100, placeholder="예: 무조건 막는 건 반대지만, 기업이 책임지는 건 찬성합니다.")
-        
-        if st.button("지도에 점 찍기 📍", use_container_width=True, type="primary"):
-            if user_input:
-                with st.spinner("AI가 당신의 입장을 분석하여 지도에 배치합니다..."):
-                    res = analyze_opinion(user_input)
-                    
-                    if res == "REJECT":
-                        st.error("🚫 주제와 무관한 내용은 반영되지 않습니다.")
-                    elif res:
-                        if res['keyword'] in st.session_state.matrix_df['keyword'].values:
-                            idx = st.session_state.matrix_df.index[st.session_state.matrix_df['keyword'] == res['keyword']].tolist()[0]
-                            st.session_state.matrix_df.at[idx, 'count'] += 5
-                            old_pol = st.session_state.matrix_df.at[idx, 'polarity']
-                            st.session_state.matrix_df.at[idx, 'polarity'] = (old_pol + res['polarity']) / 2
-                            st.success(f"'{res['keyword']}' 이슈가 더 커지고 위치가 조정되었습니다!")
-                        else:
-                            new_row = {
-                                "keyword": res['keyword'],
-                                "summary": res['summary'],
-                                "count": 10, 
-                                "polarity": res['polarity'],
-                                "side": "중립"
-                            }
-                            st.session_state.matrix_df = pd.concat([pd.DataFrame([new_row]), st.session_state.matrix_df], ignore_index=True)
-                            st.success(f"새로운 관점 '{res['keyword']}'이 지도에 등장했습니다!")
-                        
-                        time.sleep(1)
-                        st.rerun()
-
-    st.markdown("### 📋 분석 리포트")
-    tab1, tab2 = st.tabs(["🔥 치열한 쟁점", "🌉 합의의 다리"])
-    
-    with tab1:
-        conflicts = df[df['polarity'].abs() > 0.4].sort_values(by='count', ascending=False)
-        for _, row in conflicts.iterrows():
-            icon = "🛡️" if row['polarity'] > 0 else "🚫"
-            st.markdown(f"**{icon} {row['keyword']}**")
-            
-    with tab2:
-        bridges_list = find_bridges(df)
-        if not bridges_list.empty:
-            for _, row in bridges_list.iterrows():
-                st.markdown(f"**🤝 {row['keyword']}**")
-                st.caption(f"{row['summary']}")
+if submit and user_input:
+    with st.spinner("의견을 분석하여 리포트에 반영 중입니다..."):
+        res = analyze_opinion(user_input)
+        if res:
+            new_row = {
+                "original": user_input,
+                "refined": res['refined'],
+                "keyword": res['keyword'],
+                "stance": res['stance']
+            }
+            st.session_state.opinions_df = pd.concat([pd.DataFrame([new_row]), st.session_state.opinions_df], ignore_index=True)
+            st.success("의견이 성공적으로 반영되었습니다!")
+            time.sleep(1)
+            st.rerun()
         else:
-            st.info("아직 뚜렷한 합의점이 보이지 않습니다.")
+            st.error("⚠️ 주제와 무관하거나, 단순한 정치적 비방은 반영되지 않습니다.")
+
+# 3. 실시간 숙의 리포트 (Insight Report) - 여기가 핵심!
+st.subheader("📊 실시간 숙의 리포트")
+
+if not st.session_state.opinions_df.empty:
+    # 데이터가 변경될 때마다 리포트를 다시 쓸 수도 있지만, 비용 절약을 위해 버튼으로 하거나 
+    # 여기서는 매번 렌더링 시 생성 (데이터가 적을 땐 괜찮음. 많아지면 캐싱 필요)
+    
+    # 비용 최적화를 위해 session_state에 리포트 저장해두고, 데이터 개수가 바뀔 때만 갱신하는 로직 추천
+    if "last_count" not in st.session_state:
+        st.session_state.last_count = 0
+        
+    current_count = len(st.session_state.opinions_df)
+    
+    if current_count > st.session_state.last_count:
+        with st.spinner("새로운 의견을 포함하여 리포트를 갱신하고 있습니다..."):
+            report_text = generate_insight_report(st.session_state.opinions_df)
+            st.session_state.report_text = report_text
+            st.session_state.last_count = current_count
+    
+    # 리포트 파싱 및 출력
+    if "report_text" in st.session_state:
+        report = st.session_state.report_text
+        
+        # GPT가 마크다운으로 줄 테니 그대로 출력하거나, 예쁘게 파싱
+        st.markdown(f"""
+        <div class="report-card">
+            <div class="report-content">{report}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 4. 개별 의견 타임라인 (증거 자료)
+    with st.expander("📜 분석에 사용된 시민들의 의견 원문 보기"):
+        for idx, row in st.session_state.opinions_df.iloc[::-1].iterrows(): # 최신순
+            st.markdown(f"**[{row['keyword']}]** {row['refined']} <span style='color:grey; font-size:0.8em'>({row['stance']})</span>", unsafe_allow_html=True)
+
+else:
+    st.info("아직 수집된 의견이 없습니다. 첫 번째 의견을 남겨주세요!")
