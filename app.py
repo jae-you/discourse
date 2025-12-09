@@ -86,18 +86,18 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [핵심 수정] GPT 프롬프트: 동적 병합 (Organic Clustering) ---
+# --- [최종 수정] GPT 프롬프트 (정치적 구호 차단 & 찬반 로직 강화) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     
-    # 1. 현재 숲에 자라고 있는 나무 이름들(키워드)을 가져옴
+    # 숲에 있는 기존 키워드 리스트
     if not st.session_state.forest_df.empty:
         existing_keywords = list(st.session_state.forest_df['keyword'].unique())
         existing_list_str = ", ".join(f"'{k}'" for k in existing_keywords)
     else:
         existing_list_str = "None"
 
-    # 순도(Mildness) 설정
+    # 순도 설정
     if purity_level >= 80:
         tone = "Extremely formal, diplomatic"
     elif purity_level >= 40:
@@ -106,39 +106,42 @@ def process_opinion_with_gpt(user_text, purity_level):
         tone = "Direct, assertive"
 
     system_prompt = f"""
-    You are a 'Civic Editor' managing an Opinion Forest.
+    You are a 'Civic Editor' capable of distinguishing between 'Political Noise' and 'Policy Arguments'.
     
-    [Step 1: Context Check]
-    Current Topic: "Australia's SNS ban for under-16s".
-    Existing Trees (Keywords) in Forest: [{existing_list_str}]
+    [Context]: The topic is "Australia's SNS ban for under-16s" (State Regulation vs Individual Freedom).
 
-    [Step 2: Semantic Clustering] (CRITICAL)
-    Analyze the user's input. Does it conceptually belong to one of the 'Existing Trees'?
-    * YES -> Reuse the EXACT same keyword from the list.
-    * NO -> Create a NEW Korean keyword (Noun, max 10 chars) that best represents the core value (e.g., '과도한 규제', '국가의 의무').
-    * NOTE: Group similar concepts even if phrased differently (e.g., "State shouldn't interfere" & "Market freedom" -> "과도한 규제" or "자율성 침해").
+    [Step 1: Strict Rejection Filter]
+    Analyze the user input.
+    * IF the input is a PURE political slogan (e.g., "Yoon Suk-yeol Out", "Impeach President", "Tear down the party") with NO mention of policy, social issues, or regulation -> OUTPUT: "REJECT"
+    * IF the input is random noise (Sports, Food, Weather) -> OUTPUT: "REJECT"
+    
+    [Step 2: Polarity & Logic Distillation] (CRITICAL)
+    Users often use "Cynical Support" (Hating the person, but supporting the policy).
+    * CASE A: "I hate [Politician], but we need this ban." 
+      -> INTENT: PRO-REGULATION. Keyword: 'Youth Protection' or 'State Duty'.
+    * CASE B: "What is the state doing? It's not [Old Era]."
+      -> INTENT: PRO-REGULATION (Demanding stronger action). Keyword: 'State Responsibility'.
+    * CASE C: "Govt is interfering with the market."
+      -> INTENT: ANTI-REGULATION. Keyword: 'Market Freedom' or 'Excessive Regulation'.
 
-    [Step 3: Logic Distillation]
-    * Remove specific politician names (e.g., Yoon, Lee) and cynicism.
-    * Extract the core policy argument.
-    
-    [Step 4: Output Generation]
-    * Keyword: The selected existing keyword OR the new one (Must be KOREAN).
-    * Short Label: A summary of the sentence (max 20 chars, Korean).
-    * Full Text: Refined sentence ({tone}, Korean).
-    
-    Format: Keyword|Short Label|Full Refined Text
+    * ACTION: Remove ALL politician names (Yoon, Lee, Moon, etc.) and party names. Keep only the policy argument.
+
+    [Step 3: Semantic Clustering]
+    * Match with Existing Trees: [{existing_list_str}] if appropriate.
+    * Or create a NEW Korean Keyword (Noun, max 10 chars).
+
+    [Output Format]
+    Keyword|Short Label|Full Refined Text
     """
     
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
-            temperature=0.3 # 일관성을 위해 낮춤
+            temperature=0.1 # 실수를 줄이기 위해 창의성을 확 낮춤 (0.1)
         )
         result = response.choices[0].message.content
         
-        # 주제 이탈 방어 로직 (간소화)
         if "REJECT" in result:
             return "REJECT"
 
