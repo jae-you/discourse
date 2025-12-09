@@ -60,37 +60,47 @@ if "opinions_df" not in st.session_state:
     ]
     st.session_state.opinions_df = pd.DataFrame(sample_data)
 
-# --- [수정] 의견 분석기 (키워드 구체화 강화) ---
+# --- [최종] 의견 분석기 (무관용 필터 & 뉘앙스 태그) ---
 def analyze_opinion(user_text):
     client = OpenAI(api_key=api_key)
     
     system_prompt = """
-    You are a 'Civic Editor'. Analyze the user's input regarding "Australia's SNS Ban".
+    You are a strict 'Civic Editor'. 
+    Analyze the user's input regarding "Australia's SNS Ban".
 
-    [Step 1: Relevance Check]
-    * ACCEPT: Direct mentions, Technical doubts (VPN), Cynicism, Abstract values.
-    * REJECT: Pure political slogans ("Yoon Out"), Random noise.
+    [Rule 1: ZERO TOLERANCE for Political/Cynical Noise]
+    * IF the input mentions ANY specific Korean politician's name (e.g., Yoon, Lee, Moon, Han) -> OUTPUT: "REJECT"
+    * IF the input mentions political parties (Democratic Party, PPP) -> OUTPUT: "REJECT"
+    * IF the input is sarcastic/cynical without a clear constructive point (e.g., "Just like the old days", "This country is doomed") -> OUTPUT: "REJECT"
+    * IF unrelated (Sports, Food) -> OUTPUT: "REJECT"
 
-    [Step 2: Extraction Rules] (CRITICAL)
-    1. Keyword: Extract the specific 'Argument Point' (Korean Noun).
-       * FORBIDDEN WORDS: '소셜미디어 금지', 'SNS', '호주', '찬성', '반대'. (Too generic).
-       * GOOD EXAMPLES: '기업의 책임', '기술적 한계', '교육의 중요성', '기본권 침해', '국가 보호 의무'.
-    2. Stance: Choose one [찬성 / 반대 / 실효성 의문 / 대안 제시 / 원칙적 우려].
-    3. Refined Text: Rewrite the argument into a declarative, formal Korean sentence.
+    [Rule 2: Complex Nuance Extraction]
+    Instead of simple Pro/Con, identify the specific 'Argument Type'.
+    Choose ONE from:
+    - [실효성 지적] (Doubting technical feasibility, VPN)
+    - [대안 제시] (Proposing education, parenting, corporate fixes)
+    - [국가 책무] (Supporting protection, state duty)
+    - [기업 책임] (Blaming platforms/algorithms)
+    - [기본권 우려] (Freedom of speech, Privacy)
+    - [원칙적 찬성] (General agreement with protection)
 
-    [Step 3: Output Format]
-    Keyword|Stance|Refined_Text
+    [Rule 3: Refinement]
+    * Keyword: Core noun (e.g. '기술적 한계', '플랫폼 규제', '미디어 리터러시'). NO generic words.
+    * Text: Rewrite into a polite, formal, and constructive Korean sentence.
+
+    [Output Format]
+    Keyword|Argument_Type|Refined_Text
     """
     
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
-            temperature=0.1
+            temperature=0.0 # 창의성 0으로 설정 (엄격하게 지시 따름)
         )
         result = response.choices[0].message.content.strip()
         
-        # 안전장치 및 파싱
+        # 안전장치
         result = result.replace("Output:", "").replace("ACCEPT", "").strip()
         
         if "REJECT" in result:
@@ -101,7 +111,7 @@ def analyze_opinion(user_text):
             if len(parts) >= 3:
                 return {
                     "keyword": parts[0].strip(),
-                    "stance": parts[1].strip(),
+                    "stance": parts[1].strip(), # 이제 '찬반'이 아니라 '뉘앙스'가 들어감
                     "refined": parts[2].strip()
                 }
         return None
@@ -210,25 +220,37 @@ if not st.session_state.opinions_df.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # 4. 정제된 의견 기록 (카드 디자인 개선)
+    # ... (리포트 표시 코드 아래) ...
+
+    # 4. 정제된 의견 기록 (뉘앙스 뱃지 적용)
     with st.expander("📜 AI가 정제한 시민 의견 기록 (Live Log)", expanded=True):
         for idx, row in st.session_state.opinions_df.iloc[::-1].iterrows():
-            # 스탠스에 따른 뱃지 색상 결정
-            badge_color = "#374151" # 기본 회색
-            if "찬성" in row['stance']: badge_color = "#1E3A8A" # 파란색 계열
-            elif "반대" in row['stance'] or "의문" in row['stance']: badge_color = "#7F1D1D" # 빨간색 계열
-            elif "대안" in row['stance']: badge_color = "#064E3B" # 초록색 계열
+            # 뉘앙스(Argument Type)에 따른 뱃지 색상 결정
+            stance = row['stance']
+            if "실효성" in stance or "우려" in stance: 
+                badge_color = "#991B1B" # 붉은색 (비판/우려)
+                icon = "🛡️"
+            elif "대안" in stance or "기업" in stance: 
+                badge_color = "#065F46" # 초록색 (제안/대안)
+                icon = "💡"
+            elif "책무" in stance or "찬성" in stance: 
+                badge_color = "#1E40AF" # 파란색 (지지/원칙)
+                icon = "⚖️"
+            else: 
+                badge_color = "#374151" # 회색 (기타)
+                icon = "💬"
 
             st.markdown(
                 f"""
-                <div style="background-color: #1F2937; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid #60A5FA;">
-                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
-                        <span style="color: #60A5FA; font-weight: bold; font-size: 0.9em;">#{row['keyword']}</span>
-                        <span style="background-color: {badge_color}; color: #E5E7EB; padding: 2px 8px; border-radius: 12px; font-size: 0.75em;">
-                            {row['stance']}
+                <div style="background-color: #1F2937; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid {badge_color};">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                        <span style="font-size: 1.2em;">{icon}</span>
+                        <span style="color: #E5E7EB; font-weight: bold; font-size: 0.95em;">#{row['keyword']}</span>
+                        <span style="background-color: {badge_color}; color: #F3F4F6; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; letter-spacing: 0.5px;">
+                            {stance}
                         </span>
                     </div>
-                    <div style="color: #E0E0E0; font-size: 1em;">
+                    <div style="color: #D1D5DB; font-size: 1em; line-height: 1.5;">
                         {row['refined']}
                     </div>
                 </div>
