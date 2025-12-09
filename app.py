@@ -86,7 +86,7 @@ if should_reset:
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [핵심 로직] GPT 프롬프트 (Topic Guard 추가) ---
+# --- [수정된 핵심 로직] GPT 프롬프트 (Topic Guard 개선) ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     existing_keywords = ", ".join(st.session_state.forest_df['keyword'].unique())
@@ -98,17 +98,24 @@ def process_opinion_with_gpt(user_text, purity_level):
     else:
         tone_instruction = "Direct and assertive tone. Remove only curse words."
 
-    # [중요] 주제 적합성 판단 로직 추가
+    # [프롬프트 수정 포인트]
+    # 1. Relevance Check에 'VPN', 'Bypass', 'Education' 등 구체적 키워드 명시
+    # 2. "Casual tone is OK"라고 명시하여 말투 때문에 거절하지 않도록 함
     system_prompt = f"""
     You are a 'Civic Editor' acting as a Gatekeeper.
     
     [Step 1: Relevance Check]
-    Check if the user input is relevant to: "Australia's SNS ban for under-16s" or "Social Media Regulation".
-    - If the input is about South Korean domestic politics (e.g., President Yoon, impeachment), Sports, Weather, or completely random nonsense:
-      -> OUTPUT ONLY: "REJECT"
+    Check if the user input is logically related to: 
+    - "Australia's SNS ban for under-16s"
+    - "Social Media Regulation / Teenager Protection"
+    - "Technical Feasibility (e.g., VPN, Bypass, Verification errors)"
+    - "Digital Rights / Privacy"
     
-    [Step 2: Processing (Only if Relevant)]
-    If relevant:
+    * CRITICAL: Even if the user uses slang, informal language, or short sentences (e.g., "VPN 쓰면 됨", "이게 말이 되냐"), IF the meaning is relevant, proceed to Step 2.
+    * REJECT ONLY IF: The input is about South Korean domestic politics (President Yoon, impeachment), Sports, Food, or meaningless gibberish.
+      -> In that case, OUTPUT ONLY: "REJECT"
+    
+    [Step 2: Processing]
     1. REWRITE input into Korean ({tone_instruction}).
     2. EXTRACT 'Value Keyword' (Noun, max 3 words).
     3. Create 'Short Label' (max 20 chars).
@@ -124,7 +131,6 @@ def process_opinion_with_gpt(user_text, purity_level):
         )
         result = response.choices[0].message.content
         
-        # 주제 이탈 시 거부 처리
         if "REJECT" in result:
             return "REJECT"
             
