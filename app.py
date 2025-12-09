@@ -55,15 +55,24 @@ else:
     st.error("⚠️ API 키가 설정되지 않았습니다.")
     st.stop()
 
-# --- 0. 초기 데이터 ---
+# --- 0. 초기 데이터 (안전장치 추가됨 ⭐) ---
+# 기존 세션에 데이터가 있어도, 구버전(full_text 컬럼 없음)이면 강제 리셋합니다.
+should_reset = False
 if "forest_df" not in st.session_state:
+    should_reset = True
+else:
+    # 컬럼 검사: 'full_text'가 없으면 구버전 데이터임 -> 리셋 필요
+    if "full_text" not in st.session_state.forest_df.columns:
+        should_reset = True
+
+if should_reset:
     data = {
         "refined_text": [
-            "우회 기술 보편화로 인한 차단 실효성 우려",
-            "청소년 보호를 위한 국가 규제의 필요성",
-            "미디어 리터러시 교육이라는 근본적 대안",
-            "알고리즘 중독에 대한 플랫폼 기업 책임 강화",
-            "연령 인증 과정의 과도한 개인정보 수집 우려",
+            "우회 기술 보편화로 실효성 우려",
+            "청소년 보호를 위한 국가 규제 필요",
+            "미디어 리터러시 교육이 근본 대안",
+            "알고리즘 중독 기업 책임 강화",
+            "연령 인증 시 개인정보 침해 우려",
         ],
         "full_text": [ # 툴팁용 긴 문장
             "우회 기술이 보편화된 상황에서 단순 차단은 실효성이 낮다는 기술적 우려가 있습니다.",
@@ -75,33 +84,32 @@ if "forest_df" not in st.session_state:
         "keyword": [
             "기술적 실효성", "청소년 보호", "대안적 교육", "기업의 책임", "프라이버시"
         ],
-        "count": [15, 12, 8, 6, 10] # 시각적 효과를 위해 초기값을 좀 키워둠
+        "count": [15, 12, 8, 6, 10]
     }
     st.session_state.forest_df = pd.DataFrame(data)
 
-# --- [로직] GPT 프롬프트 (순도 조절 반영) ---
+# --- [로직] GPT 프롬프트 ---
 def process_opinion_with_gpt(user_text, purity_level):
     client = OpenAI(api_key=api_key)
     existing_keywords = ", ".join(st.session_state.forest_df['keyword'].unique())
     
-    # 순도(Mildness)에 따른 지침 변경
+    # 순도에 따른 톤 조절
     if purity_level >= 80:
         tone_instruction = "Extremely formal, diplomatic, and soft tone. Use euphemisms."
     elif purity_level >= 40:
         tone_instruction = "Polite, objective, and declarative tone."
     else:
-        tone_instruction = "Direct and assertive tone. Remove only curse words, keep the intensity."
+        tone_instruction = "Direct and assertive tone. Remove only curse words."
 
     system_prompt = f"""
     You are a 'Civic Editor'.
-    
     [Tone Instruction]: {tone_instruction}
     
     Task 1: REWRITE input into Korean.
-    Task 2: EXTRACT the single most important 'Value Keyword' (Noun, max 3 words).
-    Task 3: Create a 'Short Label' (max 20 characters) for visualization.
+    Task 2: EXTRACT 'Value Keyword' (Noun, max 3 words).
+    Task 3: Create 'Short Label' (max 20 chars).
     
-    * Context: Australia's SNS ban for under-16s.
+    * Context: Australia's SNS ban under-16.
     * Existing Keywords: [{existing_keywords}]
     
     Format: Keyword|Short Label|Full Refined Text
@@ -127,7 +135,6 @@ def merge_opinion(new_full_text, keyword, df):
     # 키워드가 같은 것 중에서 문장이 비슷하면 병합
     subset = df[df['keyword'] == keyword]
     for idx, row in subset.iterrows():
-        # 긴 문장 기준 유사도 비교
         similarity = difflib.SequenceMatcher(None, new_full_text, row['full_text']).ratio()
         if similarity >= 0.7: 
             return idx, True 
@@ -149,7 +156,7 @@ st.link_button("🔗 관련 기사 원문 보기 (연합뉴스)", "https://www.y
 
 st.divider()
 
-# 2. 의견 심기 (순도 슬라이더 추가)
+# 2. 의견 심기
 st.markdown("#### 👩‍🌾 당신의 의견을 심어주세요")
 col_input, col_opt = st.columns([3, 1])
 
@@ -157,13 +164,12 @@ with col_input:
     user_input = st.text_input("생각 입력", label_visibility="collapsed", placeholder="예: 무조건 막는 건 답이 아닙니다. 교육이 먼저죠.")
 
 with col_opt:
-    # 여기가 순도 조절 슬라이더!
     purity = st.slider("정제 강도 (Mildness)", 0, 100, 70, help="낮을수록 직설적, 높을수록 완곡하게 표현됩니다.")
     submit = st.button("숲에 심기 🌱", type="primary", use_container_width=True)
 
 if submit and user_input:
     with st.spinner("AI가 의견을 다듬고 있습니다..."):
-        res = process_opinion_with_gpt(user_input, purity) # 순도 값 전달
+        res = process_opinion_with_gpt(user_input, purity)
         if res:
             idx, merged = merge_opinion(res['full_text'], res['keyword'], st.session_state.forest_df)
             
@@ -172,8 +178,8 @@ if submit and user_input:
                 msg = f"'{res['keyword']}' 나무가 더 크게 자랐습니다! (공감 +1) 💧"
             else:
                 new_row = {
-                    "refined_text": res['short_label'], # 차트용 짧은 라벨
-                    "full_text": res['full_text'],      # 툴팁용 긴 문장
+                    "refined_text": res['short_label'],
+                    "full_text": res['full_text'],
                     "keyword": res['keyword'],
                     "count": 1
                 }
@@ -186,20 +192,18 @@ if submit and user_input:
 
 st.divider()
 
-# 3. 가치의 숲 시각화 (글자 크기 최적화)
+# 3. 가치의 숲 시각화
 st.subheader("🌳 가치의 지도 (Value Map)")
 
 if not st.session_state.forest_df.empty:
     df = st.session_state.forest_df
     
-    # Plotly Treemap 설정
     fig = px.treemap(
         df, 
-        path=[px.Constant("Deep Agora"), 'keyword', 'refined_text'], # 계층 구조
+        path=[px.Constant("Deep Agora"), 'keyword', 'refined_text'],
         values='count',
         color='keyword',
-        color_discrete_sequence=px.colors.qualitative.Set3, # 부드러운 색감
-        # [핵심] custom_data를 사용하여 툴팁에 긴 문장을 넣음
+        color_discrete_sequence=px.colors.qualitative.Set3,
         custom_data=['full_text', 'count']
     )
     
@@ -207,23 +211,18 @@ if not st.session_state.forest_df.empty:
         margin=dict(t=0, l=0, r=0, b=0),
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(family="Pretendard", color='#E0E0E0'),
-        # [핵심] 글자가 너무 작으면 숨김 처리 (minsize)
         uniformtext=dict(minsize=14, mode='hide')
     )
     
-    # [핵심] 툴팁(Hover)과 라벨(Text) 분리
     fig.update_traces(
         root_color="#1E2329",
-        # 차트에는 '짧은 라벨'만 표시 + 줄바꿈 허용
         textinfo="label+value",
-        # 마우스 올렸을 때만 '긴 전체 문장' 표시
         hovertemplate='<b>%{label}</b><br><br>📝 전체 의견:<br>%{customdata[0]}<br><br>💧 공감: %{customdata[1]}<extra></extra>',
-        marker=dict(cornerradius=5) # 둥근 모서리 (Plotly 최신버전 필요, 안되면 무시됨)
+        marker=dict(cornerradius=5)
     )
     
     st.plotly_chart(fig, use_container_width=True)
 
-    # 4. 텍스트로 보기 (보완책)
     with st.expander("📜 의견 목록 자세히 보기"):
         st.dataframe(
             df[['keyword', 'full_text', 'count']].sort_values(by='count', ascending=False),
