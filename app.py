@@ -1,50 +1,35 @@
 import streamlit as st
 import pandas as pd
 import time
-import difflib
 import plotly.express as px
+import plotly.graph_objects as go
 from openai import OpenAI
 
 # [설정] 페이지 기본 세팅
-st.set_page_config(page_title="Deep Agora: 가치의 숲", layout="wide", page_icon="🌲")
+st.set_page_config(page_title="Deep Agora: 숙의 매트릭스", layout="wide", page_icon="⚖️")
 
-# --- [스타일] CSS 커스텀 (Dark Forest Theme) ---
+# --- [스타일] CSS 커스텀 (Professional Dark Theme) ---
 st.markdown("""
 <style>
-    /* 전체 배경 */
     .stApp { background-color: #0E1117; }
+    h1, h2, h3 { color: #E0E0E0 !important; font-family: 'Pretendard'; }
+    .stMarkdown, p, div { color: #B0B8C4; }
     
-    /* 텍스트 가독성 */
-    .stMarkdown, .stText, p, div, span, label, li {
-        color: #C1C7D0 !important;
-        font-family: 'Pretendard', sans-serif;
-        font-weight: 400 !important;
+    /* 매트릭스 설명 카드 */
+    .info-card {
+        background-color: #1F2937;
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid #374151;
+        margin-bottom: 10px;
     }
     
-    /* 헤더 포인트 */
-    h1, h2, h3 { color: #69F0AE !important; }
-
-    /* 뉴스 카드 */
-    .news-card {
-        background-color: #161B22;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #2196F3;
-        margin-bottom: 20px;
-        color: #C9D1D9;
+    /* 탭 스타일 */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px; white-space: pre-wrap; background-color: #1F2937; border-radius: 5px; color: white;
     }
-    
-    /* 입력창 커스텀 */
-    .stTextInput > div > div > input {
-        background-color: #21262D !important;
-        color: white !important;
-        border: 1px solid #30363D;
-    }
-    
-    /* 슬라이더 스타일 */
-    .stSlider > div > div > div > div {
-        background-color: #69F0AE;
-    }
+    .stTabs [aria-selected="true"] { background-color: #3B82F6; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,85 +40,39 @@ else:
     st.error("⚠️ API 키가 설정되지 않았습니다.")
     st.stop()
 
-# --- 0. 초기 데이터 (데이터 마이그레이션 포함) ---
-should_reset = False
-if "forest_df" not in st.session_state:
-    should_reset = True
-else:
-    if "full_text" not in st.session_state.forest_df.columns:
-        should_reset = True
-
-if should_reset:
+# --- 0. 초기 데이터 (매트릭스 좌표용 데이터 포함) ---
+if "matrix_df" not in st.session_state:
     data = {
-        "refined_text": [
-            "우회 기술 보편화로 실효성 우려",
-            "청소년 보호를 위한 국가 규제 필요",
-            "미디어 리터러시 교육이 근본 대안",
-            "알고리즘 중독 기업 책임 강화",
-            "연령 인증 시 개인정보 침해 우려",
+        "keyword": ["기술적 실효성", "청소년 보호", "프라이버시", "기업 책임", "교육적 대안"],
+        "summary": [
+            "VPN 등 우회 기술로 인해 차단은 무용지물이라는 기술적 회의론",
+            "국가가 나서서라도 중독으로부터 청소년을 보호해야 한다는 당위론",
+            "연령 인증 과정에서 발생하는 개인정보 유출 및 감시 사회 우려",
+            "알고리즘 중독을 방치한 플랫폼 기업에 징벌적 책임을 물어야 함",
+            "강제적 차단보다는 미디어 리터러시 교육이 근본적 해법임"
         ],
-        "full_text": [ 
-            "우회 기술이 보편화된 상황에서 단순 차단은 실효성이 낮다는 기술적 우려가 있습니다.",
-            "청소년의 정신건강 보호를 위해 국가 차원의 규제가 필요하다는 점에 공감합니다.",
-            "기술적 차단보다는 미디어 리터러시 교육이 근본적인 해결책이 될 수 있습니다.",
-            "중독성 강한 알고리즘을 방치한 기업의 사회적 책임을 강화해야 합니다.",
-            "연령 인증을 위해 신분증 등을 요구하는 것은 과도한 개인정보 수집입니다."
-        ],
-        "keyword": [
-            "기술적 실효성", "청소년 보호", "대안적 교육", "기업의 책임", "프라이버시"
-        ],
-        "count": [15, 12, 8, 6, 10]
+        "count": [45, 30, 15, 25, 10],  # Y축: 참여도(관심도)
+        "consensus": [0.2, 0.8, 0.4, 0.9, 0.6], # X축: 합의 수준 (0=갈등, 1=합의)
+        "type": ["쟁점", "합의", "쟁점", "합의", "숙의필요"] # 카테고리
     }
-    st.session_state.forest_df = pd.DataFrame(data)
+    st.session_state.matrix_df = pd.DataFrame(data)
 
-# --- [최종 진화] GPT 프롬프트 (대안 우선 법칙 적용) ---
-def process_opinion_with_gpt(user_text, purity_level):
+# --- [로직] GPT 프롬프트 (좌표 분석 추가) ---
+def analyze_opinion(user_text):
     client = OpenAI(api_key=api_key)
     
-    # 기존 숲 키워드
-    if not st.session_state.forest_df.empty:
-        existing_keywords = list(st.session_state.forest_df['keyword'].unique())
-        existing_list_str = ", ".join(f"'{k}'" for k in existing_keywords)
-    else:
-        existing_list_str = "None"
-
-    # 순도 설정
-    if purity_level >= 80:
-        tone = "Extremely formal, diplomatic"
-    elif purity_level >= 40:
-        tone = "Polite, objective"
-    else:
-        tone = "Direct, assertive"
-
-    system_prompt = f"""
-    You are a 'Civic Editor' capable of identifying the ULTIMATE INTENT of a complex argument.
+    system_prompt = """
+    You are a 'Policy Analyst'.
+    Analyze the user's input regarding "Australia's SNS Ban".
     
-    [Context]: "Australia's SNS ban for under-16s".
-
-    [Step 1: Relevance Check]
-    * Check broad relevance (State, Market, Tech, Education, Rights).
-    * REJECT ONLY IF: Pure domestic political slogan (e.g. "Yoon Out") OR completely unrelated.
-
-    [Step 2: Logic Distillation & Priority Rule] (CRITICAL)
-    Users often combine "Criticism of Current Method" with "Alternative Proposal".
-    * RULE: 'Proposal/Duty' > 'Criticism/Status Quo'.
-    * Example 1: "Blocking is useless (Criticism), Companies should fix algorithms (Proposal)."
-      -> Focus on 'Companies'. Keyword: '기업의 책임' (Corporate Responsibility).
-    * Example 2: "I hate regulation (Criticism), but parents should teach kids (Proposal)."
-      -> Focus on 'Parents'. Keyword: '가정의 역할' or '교육'.
-    * Example 3: "It violates freedom (Criticism)."
-      -> Only then, Keyword: '자유 침해' (Freedom).
-
-    [Step 3: Keyword Assignment]
-    * Reuse existing keywords: [{existing_list_str}] if they fit the ULTIMATE INTENT.
-    * Or create a KOREAN Noun (max 10 chars). NEVER use English.
-
-    [Step 4: Output]
-    * Keyword: KOREAN ONLY.
-    * Short Label: Korean summary (max 20 chars).
-    * Full Text: Refined Korean sentence ({tone}).
-
-    Format: Keyword|Short Label|Full Refined Text
+    Output Format: Keyword|Summary|Consensus_Score(0.0-1.0)|Is_New_Topic(True/False)
+    
+    Rules:
+    1. Keyword: Core value (Korean Noun).
+    2. Summary: One formal Korean sentence.
+    3. Consensus_Score: Estimate how controversial this opinion is based on general public sentiment.
+       - 0.0 ~ 0.3: Highly controversial / Minority view
+       - 0.7 ~ 1.0: Generally agreed / Common sense (e.g. "Addiction is bad")
     """
     
     try:
@@ -143,127 +82,109 @@ def process_opinion_with_gpt(user_text, purity_level):
             temperature=0.1
         )
         result = response.choices[0].message.content
-        
-        if "REJECT" in result:
-            return "REJECT"
-
-        keyword, short_label, full_text = result.split("|", 2)
+        parts = result.split("|")
         return {
-            "keyword": keyword.strip(),
-            "short_label": short_label.strip(),
-            "full_text": full_text.strip()
+            "keyword": parts[0],
+            "summary": parts[1],
+            "consensus": float(parts[2]),
+            "is_new": parts[3]
         }
     except:
         return None
 
-# --- [로직] 단순화된 병합 (이제 AI가 키워드를 맞춰주므로 로직은 간단해짐) ---
-def merge_opinion(new_full_text, keyword, df):
-    # AI가 이미 같은 키워드를 줬다면, 그 안에서 문장 유사도만 체크
-    subset = df[df['keyword'] == keyword]
-    for idx, row in subset.iterrows():
-        similarity = difflib.SequenceMatcher(None, new_full_text, row['full_text']).ratio()
-        if similarity >= 0.7: 
-            return idx, True 
-    return None, False
 # ================= UI 시작 =================
 
-st.title("🌲 Deep Agora: 가치의 숲")
+st.title("⚖️ Deep Agora: 숙의 매트릭스")
+st.caption("단순한 나열이 아닙니다. 우리가 '어디에 집중해야 하는지'를 보여줍니다.")
 
-# 1. 뉴스 브리핑
-st.markdown("""
-<div class="news-card">
-    <h4>📢 [이슈] 호주, 16세 미만 SNS 원천 차단 법안</h4>
-    <p>호주 정부가 청소년 정신건강 보호를 위해 SNS 계정 보유를 금지합니다.<br>
-    쟁점: <b>국가의 보호 의무</b> vs <b>기술적 실효성 및 기본권</b></p>
-</div>
-""", unsafe_allow_html=True)
-st.link_button("🔗 관련 기사 원문 보기 (연합뉴스)", "https://www.yna.co.kr/view/AKR20251209006700084?input=1195m")
+# 1. 뉴스 브리핑 (간략화)
+with st.expander("📢 [이슈 브리핑] 호주 16세 미만 SNS 차단 법안", expanded=False):
+    st.markdown("호주 정부가 청소년 SNS 계정 보유를 금지합니다. 쟁점은 '국가의 보호 의무' vs '자율권 및 실효성'입니다.")
 
-st.divider()
+col_main, col_side = st.columns([3, 2])
 
-# 2. 의견 심기
-st.markdown("#### 👩‍🌾 당신의 의견을 심어주세요")
-col_input, col_opt = st.columns([3, 1])
-
-with col_input:
-    user_input = st.text_input("생각 입력", label_visibility="collapsed", placeholder="예: 무조건 막는 건 답이 아닙니다. 교육이 먼저죠.")
-
-with col_opt:
-    purity = st.slider("정제 강도", 0, 100, 70, help="낮을수록 직설적, 높을수록 완곡하게 표현됩니다.")
-    submit = st.button("숲에 심기 🌱", type="primary", use_container_width=True)
-
-if submit and user_input:
-    with st.spinner("AI가 의견을 검토하고 있습니다..."):
-        res = process_opinion_with_gpt(user_input, purity)
-        
-        # [수정] 결과 처리 로직 분기
-        if res == "REJECT":
-            st.error("🚫 주제와 무관한 의견(국내 정치, 비방, 잡담 등)은 정원에 심을 수 없습니다.")
-        elif res:
-            idx, merged = merge_opinion(res['full_text'], res['keyword'], st.session_state.forest_df)
-            
-            if merged:
-                st.session_state.forest_df.at[idx, 'count'] += 1
-                msg = f"'{res['keyword']}' 나무가 더 크게 자랐습니다! (공감 +1) 💧"
-            else:
-                new_row = {
-                    "refined_text": res['short_label'],
-                    "full_text": res['full_text'],
-                    "keyword": res['keyword'],
-                    "count": 1
-                }
-                st.session_state.forest_df = pd.concat([pd.DataFrame([new_row]), st.session_state.forest_df], ignore_index=True)
-                msg = f"새로운 묘목 '{res['keyword']}'을 심었습니다! 🌲"
-            
-            st.success(msg)
-            time.sleep(1.0)
-            st.rerun()
-        else:
-            st.error("오류가 발생했습니다. 다시 시도해주세요.")
-
-st.divider()
-
-# 3. 가치의 숲 시각화
-st.subheader("🌳 가치의 지도 (Value Map)")
-
-if not st.session_state.forest_df.empty:
-    df = st.session_state.forest_df
+# --- [메인 시각화] 4분면 매트릭스 ---
+with col_main:
+    st.markdown("### 🗺️ 공론 지형도 (Debate Landscape)")
     
-    fig = px.treemap(
+    df = st.session_state.matrix_df
+    
+    # Scatter Plot 그리기
+    fig = px.scatter(
         df, 
-        path=[px.Constant("Deep Agora"), 'keyword', 'refined_text'],
-        values='count',
-        color='keyword',
-        color_discrete_sequence=px.colors.qualitative.Set3,
-        custom_data=['full_text', 'count']
+        x="consensus", 
+        y="count", 
+        size="count", 
+        color="type",
+        text="keyword",
+        hover_name="summary",
+        range_x=[0, 1.1],
+        range_y=[0, df['count'].max() + 20],
+        color_discrete_map={"쟁점": "#FF5252", "합의": "#00E676", "숙의필요": "#FFD740"}
     )
     
+    # 4분면 배경 및 축 설정
     fig.update_layout(
-        margin=dict(t=0, l=0, r=0, b=0),
-        paper_bgcolor='rgba(0,0,0,0)',
-        font=dict(family="Pretendard", color='#E0E0E0'),
-        uniformtext=dict(minsize=14, mode='hide')
+        plot_bgcolor="#161B22",
+        paper_bgcolor="#0E1117",
+        font=dict(color="#E0E0E0"),
+        xaxis=dict(title="합의 수준 (오른쪽일수록 합의됨)", showgrid=True, gridcolor="#30363D"),
+        yaxis=dict(title="참여 강도 (위쪽일수록 뜨거움)", showgrid=True, gridcolor="#30363D"),
+        shapes=[
+            # 4분면 구분선
+            dict(type="line", x0=0.5, y0=0, x1=0.5, y1=df['count'].max()+20, line=dict(color="grey", dash="dot")),
+            dict(type="line", x0=0, y0=20, x1=1.1, y1=20, line=dict(color="grey", dash="dot"))
+        ]
     )
     
-    fig.update_traces(
-        root_color="#1E2329",
-        textinfo="label+value",
-        hovertemplate='<b>%{label}</b><br><br>📝 전체 의견:<br>%{customdata[0]}<br><br>💧 공감: %{customdata[1]}<extra></extra>',
-        marker=dict(cornerradius=5)
-    )
+    # 텍스트 위치 조정
+    fig.update_traces(textposition='top center')
     
     st.plotly_chart(fig, use_container_width=True)
+    
+    st.info("""
+    **💡 차트 읽는 법:**
+    - **좌상단 (🔥 치열한 쟁점):** 참여는 많은데 합의가 안 된 곳. **우리가 가장 먼저 토론해야 할 주제**입니다.
+    - **우상단 (✅ 사회적 합의):** 참여도 많고 동의도 얻은 곳. 정책으로 바로 실행 가능합니다.
+    """)
 
-    with st.expander("📜 의견 목록 자세히 보기"):
-        st.dataframe(
-            df[['keyword', 'full_text', 'count']].sort_values(by='count', ascending=False),
-            column_config={
-                "keyword": "핵심 가치",
-                "full_text": "전체 의견",
-                "count": st.column_config.NumberColumn("공감", format="💧 %d")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-else:
-    st.info("아직 숲이 비어있습니다. 의견을 심어주세요!")
+# --- [사이드바] 의견 입력 및 리스트 ---
+with col_side:
+    # 2. 의견 입력
+    st.markdown("### 🗳️ 의견 보태기")
+    with st.container(border=True):
+        user_input = st.text_area("이 사안의 핵심은 무엇인가요?", height=80)
+        if st.button("매트릭스에 점 찍기 📍", use_container_width=True, type="primary"):
+            if user_input:
+                with st.spinner("좌표를 계산 중입니다..."):
+                    res = analyze_opinion(user_input)
+                    if res:
+                        # 데이터 업데이트 로직 (간소화)
+                        # 실제로는 키워드가 같으면 병합해야 함
+                        new_row = {
+                            "keyword": res['keyword'],
+                            "summary": res['summary'],
+                            "count": 10, # 초기값
+                            "consensus": res['consensus'],
+                            "type": "쟁점" if res['consensus'] < 0.5 else "합의"
+                        }
+                        st.session_state.matrix_df = pd.concat([pd.DataFrame([new_row]), st.session_state.matrix_df], ignore_index=True)
+                        st.rerun()
+
+    # 3. 우선순위 리스트 (Priority List)
+    st.markdown("### 📋 우선순위별 안건")
+    
+    # 탭으로 구분하여 보여줌
+    tab1, tab2 = st.tabs(["🔥 쟁점 (토론필요)", "✅ 합의 (실행가능)"])
+    
+    with tab1:
+        # 합의 점수가 낮은 순(0.0~0.5) & 카운트 높은 순
+        issues = df[df['consensus'] <= 0.5].sort_values(by='count', ascending=False)
+        for _, row in issues.iterrows():
+            st.warning(f"**{row['keyword']}** (관심도 {row['count']})\n\n{row['summary']}")
+            
+    with tab2:
+        # 합의 점수가 높은 순(0.6~1.0)
+        agreements = df[df['consensus'] > 0.5].sort_values(by='count', ascending=False)
+        for _, row in agreements.iterrows():
+            st.success(f"**{row['keyword']}** (관심도 {row['count']})\n\n{row['summary']}")
