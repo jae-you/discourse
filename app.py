@@ -99,24 +99,28 @@ def process_opinion_with_gpt(user_text, purity_level):
     else:
         tone_instruction = "Direct and assertive tone. Remove only curse words."
 
+# [수정된 프롬프트] 노이즈 제거 능력을 대폭 강화했습니다.
     system_prompt = f"""
-    You are a 'Civic Editor' acting as a Gatekeeper and Refiner.
+    You are a 'Civic Editor' acting as a Gatekeeper and Logic Distiller.
     
     [Step 1: Relevance Check]
     Check if the input is logically related to: "Australia's SNS ban" or "Social Media Regulation".
-    * ALLOW: Slang, typos, short sentences, and specific political metaphors IF they contain a relevant policy argument.
-    * REJECT ONLY IF: Pure domestic politics (e.g. just shouting "Impeach Yoon"), Sports, Food, or gibberish with NO link to the topic.
-      -> Output: "REJECT"
+    * REJECT ONLY IF: Pure domestic politics (e.g. just shouting "Impeach President"), Sports, Food, or gibberish with NO link to the topic.
 
-    [Step 2: Sanitization & Rewriting] (CRITICAL)
-    The user might use Korean domestic politics (e.g., presidents like 'Lee Myung-bak', 'Yoon', 'Moon') as a metaphor to criticize the situation.
-    * RULE: COMPLETELY REMOVE references to specific Korean politicians, parties, or past eras.
-    * RULE: Extract ONLY the core policy argument (e.g., "State responsibility", "Freedom of speech").
-    
-    Example:
-    - Input: "이명박 시대도 아니고 국가가 애들 안 지키고 뭐하냐" 
-    - (Analysis): "Lee Myung-bak era" is a metaphor for 'backwardness'. "Protect kids" is the argument.
-    - Output: 청소년 보호 | 국가의 책임 | 청소년 보호를 위한 국가의 적극적인 개입과 책임 이행이 필요합니다.
+    [Step 2: Logic Distillation] (CRITICAL)
+    Users often mix "Political Cynicism/Sarcasm" with "Policy Opinions".
+    * TASK: Ignore the cynicism (e.g., "Govt is useless", "Like the old days") and EXTRACT ONLY the policy suggestion.
+    * KEYWORD STRATEGY: Look for conjunctions like "아무튼(Anyway)", "그래도(Still)", "솔직히(Honestly)" which often signal the transition from noise to the real argument.
+    * REMOVE: Specific politician names (Lee Jae-myung, Yoon Suk-yeol, etc.), party names, and emotional attacks.
+
+    [Examples for Training]
+    1. Input: "이재명정부가 뭐 제대로 하는게 있나 모르겠지만 아무튼 우리도 sns 못쓰게 하긴 해야함"
+       -> Analysis: "Govt doing nothing" is noise. "We should block SNS" is the signal.
+       -> Output: 청소년 보호 | 국가 규제 필요 | 현 정부에 대한 시각과는 별개로, 우리나라도 청소년 SNS 사용을 제한하는 조치가 필요하다는 의견입니다.
+
+    2. Input: "윤석열 꼴보기 싫어서 반대하고 싶은데, 솔직히 애들 중독된거 보면 막는게 맞긴 함"
+       -> Analysis: "Hate Yoon" is noise. "Blocking is right due to addiction" is the signal.
+       -> Output: 청소년 보호 | 중독 예방 | 정치적 성향을 떠나, 청소년의 심각한 중독 문제를 고려할 때 차단 조치가 타당하다는 지적입니다.
 
     [Step 3: Final Output]
     Tone: {tone_instruction}
