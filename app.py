@@ -7,48 +7,59 @@ from openai import OpenAI
 # [설정] 페이지 기본 세팅
 st.set_page_config(page_title="Deep Agora: 숙의의 정원", layout="wide", page_icon="🌷")
 
-# --- [스타일] CSS 커스텀 (다크모드 호환성 해결) ---
+# --- [스타일] CSS 커스텀 (다크 모드: Dark Garden Theme) ---
 st.markdown("""
 <style>
-    /* 1. 전체 배경색: 은은한 미색 */
+    /* 1. 전체 배경색: 아주 깊은 다크 그레이 (눈 보호) */
     .stApp {
-        background-color: #FDFCF8;
+        background-color: #0E1117;
     }
     
-    /* 2. 메인 텍스트 강제 검정색 (다크모드일 때 흰 글씨 되는 것 방지) */
-    .stMarkdown, .stText, p, div {
-        color: #333333 !important;
+    /* 2. 기본 텍스트: 밝은 회색 (완전 흰색보다 눈이 편함) */
+    .stMarkdown, .stText, p, div, span, label {
+        color: #E0E0E0 !important;
     }
 
-    /* 3. 카드 디자인 */
+    /* 3. 카드 디자인: 배경보다 살짝 밝은 톤으로 구분감 주기 */
     div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
-        background-color: white;
+        background-color: #262730; /* 카드 배경색 */
         padding: 15px;
         border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        border: 1px solid #E0E0E0;
-        /* 카드 내부 글자색도 확실하게 검정으로 고정 */
-        color: #333333 !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.5); /* 그림자 진하게 */
+        border: 1px solid #41444C; /* 테두리 은은하게 */
     }
 
-    /* 4. 헤더 폰트 스타일 */
+    /* 4. 헤더 폰트: 밝은 라임/민트색 (어두운 곳에서 잘 보이는 포인트 컬러) */
     h1, h2, h3 {
         font-family: 'Helvetica Neue', sans-serif;
-        color: #2E7D32 !important; /* 진한 초록색 */
+        color: #81C784 !important; 
     }
     
-    /* 5. 입력창, 버튼 등 컴포넌트 텍스트 색상 보정 */
-    .stTextInput > label, .stButton > button {
-        color: #333333 !important;
+    /* 5. 입력창(Input) 내부 스타일 */
+    .stTextInput > div > div > input {
+        color: #FFFFFF !important;
+        background-color: #1F2229 !important;
     }
     
-    /* 6. 프로그레스 바 색상 (초록색) */
+    /* 6. Expander (원문 보기) 스타일 보정 */
+    .streamlit-expanderHeader {
+        background-color: #262730 !important;
+        color: #E0E0E0 !important;
+    }
+    
+    /* 7. 팝오버 등 기타 텍스트 가독성 확보 */
+    div[data-testid="stPopoverBody"] {
+        background-color: #262730 !important;
+        color: #E0E0E0 !important;
+        border: 1px solid #41444C;
+    }
+
+    /* 8. 프로그레스 바 색상 (네온 그린) */
     .stProgress > div > div > div > div {
-        background-color: #66BB6A;
+        background-color: #00E676;
     }
 </style>
 """, unsafe_allow_html=True)
-
 # --- [보안 1] 비밀번호 기능 (선택) ---
 def check_password():
     if "password_correct" not in st.session_state:
