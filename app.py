@@ -60,7 +60,7 @@ if "opinions_df" not in st.session_state:
     ]
     st.session_state.opinions_df = pd.DataFrame(sample_data)
 
-# --- [수정] 의견 분석기 (엄격한 포맷팅 적용) ---
+# --- [수정] 의견 분석기 (키워드 구체화 강화) ---
 def analyze_opinion(user_text):
     client = OpenAI(api_key=api_key)
     
@@ -68,18 +68,17 @@ def analyze_opinion(user_text):
     You are a 'Civic Editor'. Analyze the user's input regarding "Australia's SNS Ban".
 
     [Step 1: Relevance Check]
-    * ACCEPT: Direct mentions (SNS, Ban), Technical doubts (VPN), Cynicism (Education is fantasy), Abstract values (Freedom).
+    * ACCEPT: Direct mentions, Technical doubts (VPN), Cynicism, Abstract values.
     * REJECT: Pure political slogans ("Yoon Out"), Random noise.
 
-    [Step 2: Extraction Rules]
-    1. Keyword: Core value in KOREAN Noun (max 10 chars). NO English. (e.g. 'SNS Ban' -> '소셜미디어 금지' or '시장 개입').
+    [Step 2: Extraction Rules] (CRITICAL)
+    1. Keyword: Extract the specific 'Argument Point' (Korean Noun).
+       * FORBIDDEN WORDS: '소셜미디어 금지', 'SNS', '호주', '찬성', '반대'. (Too generic).
+       * GOOD EXAMPLES: '기업의 책임', '기술적 한계', '교육의 중요성', '기본권 침해', '국가 보호 의무'.
     2. Stance: Choose one [찬성 / 반대 / 실효성 의문 / 대안 제시 / 원칙적 우려].
-    3. Refined Text: Rewrite the core argument into a declarative, formal Korean sentence.
+    3. Refined Text: Rewrite the argument into a declarative, formal Korean sentence.
 
     [Step 3: Output Format]
-    * Constraint: If REJECT, output ONLY "REJECT".
-    * Constraint: If ACCEPT, output ONLY the format below (No "Output:", No "ACCEPT" prefix).
-    
     Keyword|Stance|Refined_Text
     """
     
@@ -91,13 +90,12 @@ def analyze_opinion(user_text):
         )
         result = response.choices[0].message.content.strip()
         
-        # [안전장치] "ACCEPT"나 "Output:" 같은 군더더기가 붙어나오면 제거
+        # 안전장치 및 파싱
         result = result.replace("Output:", "").replace("ACCEPT", "").strip()
         
         if "REJECT" in result:
             return None
             
-        # 파이프(|) 기준으로 정확히 3등분
         if "|" in result:
             parts = result.split("|")
             if len(parts) >= 3:
@@ -109,6 +107,7 @@ def analyze_opinion(user_text):
         return None
     except:
         return None
+
 
 # --- [핵심 2] 종합 리포트 생성기 (The Insight Generator) ---
 def generate_insight_report(df):
@@ -211,19 +210,27 @@ if not st.session_state.opinions_df.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # 4. 개별 의견 타임라인 (용어 수정)
-    with st.expander("📜 AI가 정제한 시민 의견 기록 (Live Log)"):
-        # 최신순으로 정렬하여 보여줌
+# 4. 정제된 의견 기록 (카드 디자인 개선)
+with st.expander("📜 AI가 정제한 시민 의견 기록 (Live Log)", expanded=True):
         for idx, row in st.session_state.opinions_df.iloc[::-1].iterrows():
+            # 스탠스에 따른 뱃지 색상 결정
+            badge_color = "#374151" # 기본 회색
+            if "찬성" in row['stance']: badge_color = "#1E3A8A" # 파란색 계열
+            elif "반대" in row['stance'] or "의문" in row['stance']: badge_color = "#7F1D1D" # 빨간색 계열
+            elif "대안" in row['stance']: badge_color = "#064E3B" # 초록색 계열
+
             st.markdown(
                 f"""
-                <div style="padding: 10px; border-bottom: 1px solid #374151;">
-                    <span style="color:#60A5FA; font-weight:bold;">[{row['keyword']}]</span>
-                    <span style="color:#E0E0E0;">{row['refined']}</span>
-                    <br>
-                    <span style="color:#9CA3AF; font-size:0.8em; background-color:#374151; padding:2px 6px; border-radius:4px;">
-                        {row['stance']}
-                    </span>
+                <div style="background-color: #1F2937; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid #60A5FA;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                        <span style="color: #60A5FA; font-weight: bold; font-size: 0.9em;">#{row['keyword']}</span>
+                        <span style="background-color: {badge_color}; color: #E5E7EB; padding: 2px 8px; border-radius: 12px; font-size: 0.75em;">
+                            {row['stance']}
+                        </span>
+                    </div>
+                    <div style="color: #E0E0E0; font-size: 1em;">
+                        {row['refined']}
+                    </div>
                 </div>
                 """, 
                 unsafe_allow_html=True
