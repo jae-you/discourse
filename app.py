@@ -1,15 +1,16 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import random
+import time
+from openai import OpenAI
 
 # [설정] 페이지 기본 세팅
 st.set_page_config(page_title="Deep Agora: 숙의의 정원", layout="wide", page_icon="🌿")
 
-# --- 1. 가상 데이터 생성 (AI가 이미 처리했다고 가정) ---
-# 실제로는 LLM이 수천 개의 댓글을 분석해 아래와 같은 DataFrame을 생성합니다.
-def load_mock_data():
+# --- 0. 초기 데이터 및 상태 설정 (Session State) ---
+# 새로고침해도 데이터가 날아가지 않도록 session_state에 저장합니다.
+if "comments_df" not in st.session_state:
     data = {
-        "user_id": ["User_A", "User_B", "User_C", "User_D", "User_E", "User_F", "User_G"],
         "original_text": [
             "꼰대들이 뭘 알아? VPN 쓰면 됨.", 
             "애들 망치는 틱톡 금지 찬성!", 
@@ -19,8 +20,8 @@ def load_mock_data():
             "부모가 관리해야지 왜 국가가 나서?", 
             "청소년도 시민인데 기본권 침해임."
         ],
-        "refined_text": [ # AI가 '협력적(Collaborative)'으로 변환한 텍스트
-            "우회 기술이 보편화된 상황에서 강제적 차단은 실효성이 낮다는 우려가 있습니다.",
+        "refined_text": [
+            "우회 기술이 보편화된 상황에서 강제적 차단은 실효성이 낮다는 기술적 우려가 있습니다.",
             "청소년 보호를 위해 플랫폼의 유해한 영향력을 규제할 필요성에 깊이 공감합니다.",
             "기술적 차단보다는 미디어 리터러시 교육이 근본적인 해결책이 될 수 있습니다.",
             "알고리즘의 중독성 문제는 심각하며, 이에 대한 기업의 사회적 책임을 강화해야 합니다.",
@@ -28,87 +29,157 @@ def load_mock_data():
             "국가의 일괄적 규제보다는 가정 내에서의 지도와 자율성이 우선시되어야 한다고 생각합니다.",
             "청소년의 디지털 정보 접근권과 자기결정권 또한 중요한 가치로 고려되어야 합니다."
         ],
-        "topic_cluster": [ # AI가 분류한 주제 (승패 구도가 아닌 '쟁점' 중심)
+        "topic_cluster": [
             "실효성 및 기술", "보호 및 규제 필요성", "실효성 및 기술", "보호 및 규제 필요성", "프라이버시/기본권", "프라이버시/기본권", "프라이버시/기본권"
         ],
-        "civility_score": [0.2, 0.3, 0.85, 0.9, 0.4, 0.75, 0.8], # 품격 점수 (원문 기준)
-        "representative_score": [0.5, 0.6, 0.95, 0.92, 0.7, 0.88, 0.85] # 대표성 점수 (비슷한 의견이 얼마나 많은지 + 논리성)
+        "civility_score": [0.2, 0.3, 0.85, 0.9, 0.4, 0.75, 0.8],
+        "representative_score": [0.5, 0.6, 0.95, 0.92, 0.7, 0.88, 0.85]
     }
-    return pd.DataFrame(data)
+    st.session_state.comments_df = pd.DataFrame(data)
 
-df = load_mock_data()
+# --- 1. OpenAI 연동 함수 (논문의 Collaborative Prompt 적용) ---
+def process_opinion_with_gpt(api_key, user_text):
+    """
+    GPT를 사용하여 1) 패러프레이징(협력적 스타일) 2) 주제 분류를 수행합니다.
+    """
+    if not api_key:
+        # 키가 없을 경우 시뮬레이션 모드 동작
+        time.sleep(1)
+        return {
+            "refined": f"(시뮬레이션) {user_text} - 라는 의견을 협력적으로 다듬었습니다.",
+            "topic": random.choice(["실효성 및 기술", "보호 및 규제 필요성", "프라이버시/기본권"]),
+            "score": random.uniform(0.7, 0.95)
+        }
 
-# --- 2. UI: 헤더 및 철학 ---
+    client = OpenAI(api_key=api_key)
+    
+    # 논문 Appendix A의 Collaborative Prompt + 주제 분류 요청
+    system_prompt = """
+    You are a 'Mediation Machine' specializing in the COLLABORATING style.
+    Your task:
+    1. Refine the user's input into Korean. Maintain assertiveness but use cooperative phrasing.
+    2. Classify the input into one of these 3 topics: ['실효성 및 기술', '보호 및 규제 필요성', '프라이버시/기본권'].
+    
+    Output format must be exactly: "Topic|Refined Text"
+    Example: "실효성 및 기술|기술적 한계에 대해 함께 고민해봐야 합니다."
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", # 또는 gpt-3.5-turbo
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text}
+            ]
+        )
+        result = response.choices[0].message.content
+        topic, refined = result.split("|", 1)
+        return {"refined": refined.strip(), "topic": topic.strip(), "score": 0.95} # New inputs get high visibility initially
+    except Exception as e:
+        st.error(f"OpenAI Error: {e}")
+        return None
+
+# --- 2. UI: 헤더 및 뉴스 브리핑 (Context Injection) ---
 st.title("🌿 Deep Agora: 의견 정원")
-st.markdown("""
-> 여기는 찬반의 전쟁터가 아닙니다.  
-> 수많은 목소리 중 **가장 설득력 있고 품격 있는 의견**들이 모여 숲을 이루는 공간입니다.  
-> *극단적인 비난은 거르고, 서로의 핵심 가치를 들여다봅니다.*
-""")
+
+# [중요] 뉴스 브리핑 섹션 (사용자가 맥락을 파악하도록 함)
+with st.container(border=True):
+    col_news_l, col_news_r = st.columns([1, 4])
+    with col_news_l:
+        st.image("https://img.icons8.com/fluency/96/news.png", width=80)
+    with col_news_r:
+        st.subheader("📢 [이슈] 호주, 16세 미만 SNS 사용 원천 차단 추진")
+        st.markdown("""
+        **핵심 내용:** 호주 정부가 세계 최초로 16세 미만 청소년의 소셜미디어(SNS) 계정 보유를 금지하는 법안을 시행합니다. 
+        기업은 연령 확인 의무를 지며 위반 시 거액의 벌금을 물게 됩니다.
+        
+        **논의 쟁점:**
+        * 🛡️ **찬성:** "청소년 정신건강 보호 및 중독 방지"
+        * 🚫 **반대:** "실효성 부족(VPN 우회), 프라이버시 침해, 청소년 소통 권리 박탈"
+        """)
+
 st.divider()
 
-# --- 3. 핵심 기능: '승패'가 아닌 '쟁점'별 카드 보기 ---
-
-# 사이드바: 필터링 옵션
+# --- 3. 사이드바 및 필터 ---
 with st.sidebar:
-    st.header("🔍 정원 가꾸기")
-    st.caption("보고 싶은 의견의 기준을 설정하세요.")
+    st.header("⚙️ 설정 & 필터")
+    
+    # OpenAI API Key 입력 (비밀번호 타입)
+    api_key = st.text_input("OpenAI API Key", type="password", help="키를 입력하면 실제 AI가 동작합니다. 없으면 시뮬레이션 모드로 작동합니다.")
+    
+    st.divider()
+    st.caption("정원 가꾸기")
     min_quality = st.slider("품격 필터 (욕설/비난 제외)", 0.0, 1.0, 0.4)
-    st.info("💡 '품격 필터'를 높이면 감정적인 배설은 사라지고 논리적인 주장만 남습니다.")
+    st.info("💡 '품격 필터'를 높이면 감정적인 소음은 사라지고 논리적인 신호만 남습니다.")
 
-# 메인 화면: 주제별 클러스터링
-# 3개의 컬럼으로 나누어 '대결'이 아닌 '병렬' 구조로 보여줌
+# --- 4. 메인 화면: 의견 정원 (DataFrame 기반 렌더링) ---
+df = st.session_state.comments_df # Session State에서 데이터 로드
+
 col1, col2, col3 = st.columns(3)
-topics = df["topic_cluster"].unique()
-
-# 각 컬럼에 주제 하나씩 배정
+topics = ["실효성 및 기술", "보호 및 규제 필요성", "프라이버시/기본권"] # 고정된 3개 주제 화분
 cols = [col1, col2, col3]
 
 for i, topic in enumerate(topics):
     with cols[i]:
         st.subheader(f"📌 {topic}")
         
-        # 해당 주제의 데이터 필터링 & 정렬 (중요: 좋아요 순이 아니라 '대표성/품격' 순)
+        # 필터링 및 정렬
         topic_df = df[
             (df["topic_cluster"] == topic) & 
             (df["civility_score"] >= min_quality)
         ].sort_values(by="representative_score", ascending=False)
         
-        # 상위 2개 의견만 '카드' 형태로 보여줌 (Noise Reduction)
-        for _, row in topic_df.head(2).iterrows():
+        for idx, row in topic_df.head(4).iterrows(): # 상위 4개까지만 표시
             with st.container(border=True):
-                # AI가 정제한 문장을 메인으로 보여줌
+                # AI 정제 텍스트 강조
                 st.markdown(f"**🗣️ {row['refined_text']}**")
+                st.progress(row['representative_score'], text="논리적 대표성")
                 
-                # 시각적 지표 (따봉 숫자 대신 '공감의 깊이' 표현)
-                st.progress(row['representative_score'], text="논리적 완결성 및 대표성")
-                
-                # 투명성: 원문 보기 (접어두기)
-                with st.expander("원문 확인하기"):
-                    st.caption(f"작성자 의도: {row['original_text']}")
-                    if row['civility_score'] < 0.5:
-                        st.warning("⚠️ 원문은 다소 거친 표현을 포함하고 있어 AI가 순화했습니다.")
+                # 원문 보기 (투명성)
+                with st.expander("원문 확인"):
+                    st.caption(f"Original: {row['original_text']}")
 
-# --- 4. 하단: 공통의 기반 (Bridge Building) ---
+# --- 5. 의견 심기 (Action Section) ---
 st.divider()
-st.subheader("🌉 우리가 만나는 지점 (Common Ground)")
-st.markdown("""
-서로 다른 주장을 하고 있지만, AI 분석 결과 참여자 **85%**가 아래 가치에는 동의하고 있습니다.
-""")
+st.markdown("### 🌱 정원에 당신의 의견 심기")
 
-# 브릿지 리포트 (가상)
 with st.container(border=True):
-    st.markdown("### ✅ 합의된 원칙")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.success("**1. 청소년 보호의 필요성**")
-        st.caption("알고리즘의 중독성으로부터 청소년을 보호해야 한다는 대원칙에는 이견이 없습니다.")
-    with c2:
-        st.success("**2. 실효성 있는 대안 요구**")
-        st.caption("단순 차단보다는, 우회가 불가능하거나 교육이 병행되는 '실질적 대안'을 원합니다.")
+    col_input, col_btn = st.columns([5, 1])
+    
+    with col_input:
+        new_opinion = st.text_input("의견을 입력하세요", placeholder="예: 무조건 막는다고 해결될까요? 교육이 더 중요하다고 봅니다.")
+    
+    with col_btn:
+        st.write("") # 줄맞춤용
+        st.write("") 
+        submit_btn = st.button("심기", use_container_width=True, type="primary")
 
-# --- 5. 참여 유도: 내 의견 심기 ---
-st.divider()
-st.markdown("### 🌱 당신의 의견 심기")
-st.text_area("이 주제에 대해 더 보태고 싶은 '가치'가 있나요?", placeholder="비난보다는 대안을, 감정보다는 논리를 담아주세요.")
-st.button("정원에 의견 심기")
+    if submit_btn and new_opinion:
+        with st.spinner("AI가 당신의 의견을 다듬어 정원에 심고 있습니다..."):
+            # 1. GPT 호출 (또는 시뮬레이션)
+            processed_data = process_opinion_with_gpt(api_key, new_opinion)
+            
+            if processed_data:
+                # 2. DataFrame에 새 행 추가
+                new_row = {
+                    "original_text": new_opinion,
+                    "refined_text": processed_data["refined"],
+                    "topic_cluster": processed_data["topic"], # AI가 분류한 주제로 자동 배정
+                    "civility_score": 1.0, # 방금 심은 의견은 우선 필터 통과하도록 설정
+                    "representative_score": processed_data["score"]
+                }
+                
+                # Session State 업데이트
+                st.session_state.comments_df = pd.concat(
+                    [pd.DataFrame([new_row]), st.session_state.comments_df], 
+                    ignore_index=True
+                )
+                
+                st.success("의견이 성공적으로 반영되었습니다! 위쪽 정원에서 확인해보세요.")
+                time.sleep(1.5)
+                st.rerun() # 화면 새로고침하여 즉시 반영
+
+# --- 6. 하단: 공통의 기반 ---
+st.markdown("---")
+st.subheader("🌉 Consensus (합의된 기반)")
+st.info("현재까지 참여자의 **88%**가 '청소년 보호의 대원칙'과 '실효성 있는 기술적 대안 마련'의 필요성에 동의했습니다.")
